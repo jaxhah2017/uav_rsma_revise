@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 def plot(map):
     uav_pos = map['pos_ubs']
-    eve_pos = map['pos_eve']
+    eve_pos = map['pos_eves']
     gts_pos = map['pos_gts']
     range_pos = map['range_pos']
     area = map['area']
@@ -40,50 +40,49 @@ def plot(map):
     plt.savefig('map.png')
 
 class General4uavMap:
-    def __init__(self, range_pos=400, n_eve=16, n_gts=20, n_ubs=4, n_community=16):
+    def __init__(self, range_pos=400, n_eve=16, n_gt=20, n_uav=4, n_community=16, r_sense=np.inf):
         self.n_eve = n_eve
-        self.n_gts = n_gts
-        self.n_ubs = n_ubs
-        self.pos_eve = np.empty((self.n_eve, 2), dtype=np.float32)
-        self.pos_gts = np.empty((self.n_gts, 2), dtype=np.float32)
-        self.pos_ubs = np.empty((self.n_ubs, 2), dtype=np.float32)
+        self.n_gt = n_gt
+        self.n_uav = n_uav
+        self.pos_eves = np.empty((self.n_eve, 2), dtype=np.float32)
+        self.pos_gts = np.empty((self.n_gt, 2), dtype=np.float32)
+        self.pos_ubs = np.empty((self.n_uav, 2), dtype=np.float32)
         self.range_pos = range_pos
         self.fen = 4
         self.area = self.range_pos / self.fen
         self.n_community = n_community
         self.gts_in_community = [[] for _ in range(self.n_community)]
+        self.r_sense = np.inf
+        self.eves_in_community = np.full((self.n_eve), -1)
 
     def set_eve(self):
-        # for i in range(self.fen):
-        #     range_eve_ly = self.area * i
-        #     range_eve_ry = self.area * (i + 1)
-        #     for j in range(self.fen):
-        #         range_eve_lx = self.area * j
-        #         range_eve_rx = self.area * (j + 1)
-        #         x = np.random.uniform(range_eve_lx, range_eve_rx)
-        #         y = np.random.uniform(range_eve_ly, range_eve_ry)
-        #         self.pos_eve[i * self.fen + j] = x, y
-        self.pos_eve[0] = [-500, -500]
-        self.pos_eve[1] = [-500, -500]
-        self.pos_eve[2] = [-500, -500]
-        self.pos_eve[3] = [-500, -500]
-        self.pos_eve[4] = [-500, -500]
-        self.pos_eve[5] = [110, 110]
-        self.pos_eve[6] = [280, 120]
-        self.pos_eve[7] = [-500, -500]
-        self.pos_eve[8] = [-500, -500]
-        self.pos_eve[9] = [190, 290]
-        self.pos_eve[10] = [220, 220]
-        self.pos_eve[11] = [-500, -500]
-        self.pos_eve[12] = [-500, -500]
-        self.pos_eve[13] = [-500, -500]
-        self.pos_eve[14] = [-500, -500]
-        self.pos_eve[15] = [-500, -500]
+        self.pos_eves[0] = [-500, -500]
+        self.pos_eves[1] = [-500, -500]
+        self.pos_eves[2] = [-500, -500]
+        self.pos_eves[3] = [-500, -500]
+        self.pos_eves[4] = [-500, -500]
+        self.pos_eves[5] = [110, 110]
+        self.pos_eves[6] = [280, 120]
+        self.pos_eves[7] = [-500, -500]
+        self.pos_eves[8] = [-500, -500]
+        self.pos_eves[9] = [190, 290]
+        self.pos_eves[10] = [220, 220]
+        self.pos_eves[11] = [-500, -500]
+        self.pos_eves[12] = [-500, -500]
+        self.pos_eves[13] = [-500, -500]
+        self.pos_eves[14] = [-500, -500]
+        self.pos_eves[15] = [-500, -500]
+
+        
+        self.eves_in_community[5] = 5
+        self.eves_in_community[6] = 6
+        self.eves_in_community[9] = 9
+        self.eves_in_community[10] = 10
 
     def set_gts(self):
         self.gts_in_community = [[] for _ in range(self.n_community)]
 
-        n_gt_in_community = int(self.n_gts / 4)
+        n_gt_in_community = int(self.n_gt / 4)
         for i in range(n_gt_in_community):
             x = np.random.uniform(120, 180)
             y = np.random.uniform(220, 280)
@@ -104,7 +103,7 @@ class General4uavMap:
             y = np.random.uniform(120, 180)
             self.pos_gts[i] = [x, y]
 
-        for i in range(self.n_gts):
+        for i in range(self.n_gt):
             x, y = self.pos_gts[i]
             num_community = (y // self.area) * self.fen + (x // self.area)
             self.gts_in_community[int(num_community)].append(i)
@@ -126,50 +125,53 @@ class General4uavMap:
         self.set_gts()
         self.set_ubs()
 
-        return dict(pos_gts=self.pos_gts,
-                    pos_eve=self.pos_eve,
-                    pos_ubs=self.pos_ubs,
-                    area=self.area,
-                    range_pos=self.range_pos,
-                    gts_in_community=self.gts_in_community)
+        return self.__dict__
+    
 
 class General2uavMap:
-    def __init__(self, range_pos=400, n_eve=16, n_gts=20, n_ubs=2, n_community=16):
+    def __init__(self, range_pos=400, n_eve=16, n_gt=20, n_uav=2, n_community=16, r_sense=np.inf):
         self.n_eve = n_eve
-        self.n_gts = n_gts
-        self.n_ubs = n_ubs
-        self.pos_eve = np.empty((self.n_eve, 2), dtype=np.float32)
-        self.pos_gts = np.empty((self.n_gts, 2), dtype=np.float32)
-        self.pos_ubs = np.empty((self.n_ubs, 2), dtype=np.float32)
+        self.n_gt = n_gt
+        self.n_uav = n_uav
+        self.pos_eves = np.empty((self.n_eve, 2), dtype=np.float32)
+        self.pos_gts = np.empty((self.n_gt, 2), dtype=np.float32)
+        self.pos_ubs = np.empty((self.n_uav, 2), dtype=np.float32)
         self.range_pos = range_pos
         self.fen = 4
         self.area = self.range_pos / self.fen
         self.n_community = n_community
         self.gts_in_community = [[] for _ in range(self.n_community)]
+        self.r_sense = np.inf
+        self.eves_in_community = np.full((self.n_eve), -1)
 
     def set_eve(self):
-        self.pos_eve[0] = [-500, -500]
-        self.pos_eve[1] = [-500, -500]
-        self.pos_eve[2] = [-500, -500]
-        self.pos_eve[3] = [-500, -500]
-        self.pos_eve[4] = [-500, -500]
-        self.pos_eve[5] = [110, 110]
-        self.pos_eve[6] = [280, 120]
-        self.pos_eve[7] = [-500, -500]
-        self.pos_eve[8] = [-500, -500]
-        self.pos_eve[9] = [190, 290]
-        self.pos_eve[10] = [220, 220]
-        self.pos_eve[11] = [-500, -500]
-        self.pos_eve[12] = [-500, -500]
-        self.pos_eve[13] = [-500, -500]
-        self.pos_eve[14] = [-500, -500]
-        self.pos_eve[15] = [-500, -500]
+        self.pos_eves[0] = [-500, -500]
+        self.pos_eves[1] = [-500, -500]
+        self.pos_eves[2] = [-500, -500]
+        self.pos_eves[3] = [-500, -500]
+        self.pos_eves[4] = [-500, -500]
+        self.pos_eves[5] = [110, 110]
+        self.pos_eves[6] = [280, 120]
+        self.pos_eves[7] = [-500, -500]
+        self.pos_eves[8] = [-500, -500]
+        self.pos_eves[9] = [190, 290]
+        self.pos_eves[10] = [220, 220]
+        self.pos_eves[11] = [-500, -500]
+        self.pos_eves[12] = [-500, -500]
+        self.pos_eves[13] = [-500, -500]
+        self.pos_eves[14] = [-500, -500]
+        self.pos_eves[15] = [-500, -500]
+
+        self.eves_in_community[5] = 5
+        self.eves_in_community[6] = 6
+        self.eves_in_community[9] = 9
+        self.eves_in_community[10] = 10
         
 
     def set_gts(self):
         self.gts_in_community = [[] for _ in range(self.n_community)]
 
-        n_gt_in_community = int(self.n_gts / 4)
+        n_gt_in_community = int(self.n_gt / 4)
         for i in range(n_gt_in_community):
             x = np.random.uniform(120, 180)
             y = np.random.uniform(220, 280)
@@ -190,7 +192,7 @@ class General2uavMap:
             y = np.random.uniform(120, 180)
             self.pos_gts[i] = [x, y]
 
-        for i in range(self.n_gts):
+        for i in range(self.n_gt):
             x, y = self.pos_gts[i]
             num_community = (y // self.area) * self.fen + (x // self.area)
             self.gts_in_community[int(num_community)].append(i)
@@ -204,18 +206,17 @@ class General2uavMap:
         self.set_gts()
         self.set_ubs()
 
-        return dict(pos_gts=self.pos_gts,
-                    pos_eve=self.pos_eve,
-                    pos_ubs=self.pos_ubs,
-                    area=self.area,
-                    range_pos=self.range_pos,
-                    gts_in_community=self.gts_in_community)
+        return self.__dict__
+
 
 if __name__ == '__main__':
     np.random.seed(10)
     general4uavMap = General4uavMap()
     generalMap = general4uavMap.get_map()
-    plot(generalMap)
+    # plot(generalMap)
+
+    print(generalMap)
+
     # print(generalMap)
     # gts_in_community = generalMap['gts_in_community']
     # print(gts_in_community)

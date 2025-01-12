@@ -17,14 +17,10 @@ class MultiUbsRsmaEvn:
     n0 = 1e-3 * np.power(10, -200 / 10) # 噪声的PSD
     bw = 180e3 # 频带
     fc = 2.4e9 # 载频
-    scene = 'urban' # 场景
+    scene = 'dense-urban' # 场景
+    safe_dist = 5 # 无人机之间的安全距离 (m)
 
     def __init__(self, args) -> None:
-        # 数量
-        self.n_uav = args.n_uav
-        self.n_gt = args.n_gt
-        self.n_eve = args.n_eve
-        
         self.cov_range = args.cov_range  # 覆盖范围
         self.comm_range = args.comm_range # 通信范围
         self.serv_capacity = args.serv_capacity # 服务范围
@@ -33,15 +29,15 @@ class MultiUbsRsmaEvn:
         
         self.apply_small_fading = args.apply_small_fading # 是否应用小尺度衰落
 
+        self.episode_length = args.episode_length # 每个episode的长度
+
         # 地图map、位置信息
         self.map = args.map()
-        self.map_info = self.map.get_map()
-        self.pos_ubs = self.map_info['pos_ubs']
-        self.pos_gts = self.map_info['pos_gts']
-        self.pos_eves = self.map_info['pos_eve']
-        self.range_pos = self.map_info['range_pos']
-        self.gts_in_community = self.map_info['gts_in_community']
-        self.n_community = len(self.gts_in_community)
+        self.map_params = self.map.get_map()
+        for k, v in self.map_params.items():
+            setattr(self, k, v)
+
+        self.n_agents = self.n_uav # 智能体个数=无人机的个数
 
         # 信道
         self.atg_chan_model = AirToGroundChannel(scene=self.scene, fc=self.fc, apply_small_fading=self.apply_small_fading) # ATG信道
@@ -61,8 +57,9 @@ class MultiUbsRsmaEvn:
         self.sche_U2E = np.zeros((self.n_uav, self.n_eve), dtype=bool)
 
         self.gt_serv_by = np.zeros((self.n_gt), dtype=np.int32) # gt i被那个无人机服务
+        self.uav_serv_gt = np.array([[] for _ in range(self.n_uav)]) # 无人机k服务的GT
 
-        self.t = 0  # 时间步
+        self.t = 1  # 时间步
 
         # 信道
         self.H_U2G = np.zeros((self.n_uav, self.n_gt))
@@ -75,29 +72,43 @@ class MultiUbsRsmaEvn:
         self.H_G2E_norm_2 = np.zeros((self.n_gt, self.n_eve))
         self.gt_norm_2 = np.zeros((self.n_gt), dtype=np.float32)
 
-        # # 可能的action
-        # self.velocity = args.velocity_bound
-        # move_amounts = np.array([self.velocity]).reshape(-1, 1)
-        # ang = 2 * np.pi * np.arange(self.n_dirs) / self.n_dirs
-        # move_dirs = np.stack([np.cos(ang), np.sin(ang)]).T  # 其分别的正余弦
-        # self.avail_moves = np.concatenate((np.zeros((1, 2)), np.kron(move_amounts, move_dirs)))
-        # self.avail_jamming_powers = [0]
-        # self.jamming_power_bound = args.jamming_power_bound
-        # for i in range(self.n_powers - 1):
-        #     self.avail_jamming_powers.append(1 * (self.jamming_power_bound / 1) ** (i / (self.n_powers - 2)))
-        # self.avail_jamming_powers = np.array(self.avail_jamming_powers, dtype=np.float32)
-        # self.avail_jamming_powers = 1e-3 * np.power(10, self.avail_jamming_powers / 10)  # to w
-        # self.n_moves = self.avail_moves.shape[0]    
+        # 可能的action
+        self.n_dirs = args.n_dirs
+        self.velocity = args.velocity_bound
+        move_amounts = np.array([self.velocity]).reshape(-1, 1)
+        ang = 2 * np.pi * np.arange(self.n_dirs) / self.n_dirs
+        move_dirs = np.stack([np.cos(ang), np.sin(ang)]).T  # 其分别的正余弦
+        self.avail_moves = np.concatenate((np.zeros((1, 2)), np.kron(move_amounts, move_dirs)))
+        
+        self.n_powers = args.n_powers
+        self.avail_jamming_powers = [0]
+        self.jamming_power_bound = args.jamming_power_bound
+        for i in range(self.n_powers - 1):
+            self.avail_jamming_powers.append(1 * (self.jamming_power_bound / 1) ** (i / (self.n_powers - 2)))
+        self.avail_jamming_powers = np.array(self.avail_jamming_powers, dtype=np.float32)
+        self.avail_jamming_powers = 1e-3 * np.power(10, self.avail_jamming_powers / 10)  # to w
+        self.n_moves = self.avail_moves.shape[0]    
 
         # 数据速率
-        self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
+        self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32) # 第一阶段直传的公共信息速率
         self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
-        self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
-        self.priv_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)   
+        self.comm_rate_U2E = np.zeros((self.n_eve, self.n_gt), dtype=np.float32)
+        self.priv_rate_U2E = np.zeros((self.n_eve, self.n_gt), dtype=np.float32)   
         self.comm_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
         self.priv_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
-        self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
-        self.priv_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
+        # self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
+        # self.priv_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
+
+        # 需要记录的数据
+        self.uav_traj = []
+        self.jamming_power_list = []
+        self.ssr_list = []
+        self.throughput_list = []
+        self.total_throughput_t = 0
+        self.total_throughput = 0
+        self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
+        self.rate_gt = np.zeros(self.n_gts, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
+        self.ssr_gt_rate = np.zeros(self.n_gts, np.float32)  # 计算GT的累积SSR
 
 
     def update_dist_conn(self) -> None:
@@ -128,14 +139,14 @@ class MultiUbsRsmaEvn:
                 self.cov_U2U[k][l] = 1 if self.dis_U2U[k][l] <= self.comm_range else 0 # 通信关联
 
         # GT与GT
-        if self.t == 0:
+        if self.t == 1:
             self.dis_G2G = np.zeros((self.n_gt, self.n_gt), dtype=np.float32)
             for i in range(self.n_gt):
                 for j in range(self.n_gt):
                     self.dis_G2G[i][j] = np.linalg.norm(self.pos_gts[i] - self.pos_gts[j])
 
         # GT与Eve
-        if self.t == 0:
+        if self.t == 1:
             self.dis_G2E = np.zeros((self.n_gt, self.n_eve), dtype=np.float32)
             for i in range(self.n_gt):
                 for e in range(self.n_eve):
@@ -153,6 +164,14 @@ class MultiUbsRsmaEvn:
                     self.sche_U2G[k][i] = 1 # UAV 服务 GT i
                     self.gt_serv_by[i] = k
                     break
+
+        # 如果不服务那就取消信道，因为要根据有无信道来判断是否被服务，从而从社区总选出信道最好的用户
+        for k in range(self.n_uav):
+            for i in range(self.n_gt):
+                if self.sche_U2G[k][i] == 0:
+                    self.H_U2G[k][i] = 0
+                    self.H_U2G_norm_2[k][i] = 0
+                    self.gt_norm_2[i] = 0
 
 
     def generate_channel(self) -> None:
@@ -236,7 +255,7 @@ class MultiUbsRsmaEvn:
 
         # stage 1: 计算 UAV->Eve 公有信息速率
         self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
-        self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
+        # self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
         for e in range(self.n_eve):
             n = self.n0 * self.bw # 本地噪声
             for k in range(self.n_uav):
@@ -247,10 +266,10 @@ class MultiUbsRsmaEvn:
                         if self.sche_U2E[l][e] == 1 and l != k:
                             n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2E[l])
                     self.comm_rate_U2E[k][e] = self.shannon_capacity(s, n)
-                    self.comm_rate_eve[e] = self.comm_rate_U2E[k][e]
+                    # self.comm_rate_eve[e] = self.comm_rate_U2E[k][e]
                      
         # stage 1: 计算 UAV->Eve 私有信息速率
-        self.priv_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
+        self.priv_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32) 
         for e in range(self.n_eve):
             n = self.n0 * self.bw # 本地噪声
             for k in range(self.n_uav):
@@ -262,20 +281,23 @@ class MultiUbsRsmaEvn:
                         if self.sche_U2E[l][e] == 1 and l != k:
                             n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2E[l])
                     self.priv_rate_U2E[k][e] = self.shannon_capacity(s, n)
-                    self.priv_rate_eve[e] = self.priv_rate_U2E[k][e]
+                    # self.priv_rate_eve[e] = self.priv_rate_U2E[k][e]
 
         """stage 2: 转发传输阶段
-            其中每个社区信道质量最好的GT,采用解码转发的方式, 转发信息给其他GT
+            TODO: 其中每个无人机cell中信道质量最好的GT,采用解码转发的方式, 转发信息给其他GT, 最后就是一个无人机一个公共信息计算，然后私有信息分别计算。
         """
         # stage 2: 计算GT->GT的速率 
-        
-        # 首先在每一个社区需要先找一个信道质量最好的
-        best_gt_in_community = np.zeros(self.n_community, dtype=np.int32)
-        for m in range(self.n_community):
+        # 首先在每一个无人机cell中需要先找一个信道质量最好的对无人机cell外的
+        best_gt_in_cell = np.zeros(self.n_uav, dtype=np.int32)
+        for k in range(self.n_uav):
+            if sum(self.sche_U2G[k]) != 0:
+                pass 
+                
+        for m in range(self.n_uav):
             if len(self.gts_in_community[m]) != 0:
-                best_gt_in_community[m] = max(self.gts_in_community[m], key=lambda i: self.gt_norm_2[i])
+                best_gt_in_cell[m] = max(self.gts_in_community[m], key=lambda i: self.gt_norm_2[i])
 
-        # i直接转发所有信息
+        # i直接转发所有信息（只转发给社区中被同一个无人机服务的）
         for m in range(self.n_community):
             i = best_gt_in_community[m]
             n = self.bw * self.n0
@@ -293,7 +315,7 @@ class MultiUbsRsmaEvn:
             s_eve = self.H_G2E_norm_2[i][e] * self.p_forward_c * (num_gt_in_community - 1)
             n_eve = self.bw * self.n0 + (self.H_G2E_norm_2[i][e] * self.p_forward_p * num_gt_in_community + 
                                          self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])
-            self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
+            # self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
             
         for m in range(self.n_community):
             i = best_gt_in_community[m]
@@ -312,19 +334,43 @@ class MultiUbsRsmaEvn:
             n_eve = self.bw * self.n0 + (self.H_G2E_norm_2[i][e] * self.p_forward_p * (num_gt_in_community - 1) +
                      self.H_G2E_norm_2[i][e] * self.p_forward_c * num_gt_in_community + 
                      self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])
-            self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
+            # self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
 
     def shannon_capacity(self, s, n):
         # 计算香农容量 (Mbps)
         return self.bw * np.log2(1 + s / n) * 1e-6
 
     def reset(self):
-        self.t = 0
+        self.uav_traj = []
+        self.jamming_power_list = []
+        self.ssr_list = []
+        self.throughput_list = []
+        self.fair_idx_list = []
+        # 初始化环境
+        self.t = 1
+        self.total_throughput_t = 0
+        self.total_throughput = 0
+        self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
+        self.rate_gt = np.zeros(self.n_gts, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
+        self.ssr_gt_rate = np.zeros(self.n_gts, np.float32)  # 计算GT的累积SSR
         self.map_info = self.map.get_map()
         self.pos_ubs = self.map_info['pos_ubs'] # 初始化位置
         self.pos_gts = self.map_info['pos_gts'] # 每个episode随机生成
+        self.gts_in_community = self.map_info['gts_in_community']
+        self.pos_eve = self.map_info['pos_eves'] # 初始化位置
+
+        self.reward = 0
+        self.mean_returns = 0
+        self.reward_scale = 0.1
+        self.ssr_system_rate = 0.0
+        self.aver_rate_per_gt = np.zeros(self.n_gts, dtype=np.float32)
+        self.rate_per_ubs_t = np.zeros(self.n_uav, dtype=np.float32)
 
         self.update_dist_conn() # 初始距离、关联关系、生成信道
+        
+        jamming_power = np.array([0 for _ in range(self.n_uav)])
+        self.transmit_data(jamming_power=jamming_power)  # 传输数据
+        self.sercurity_model()  # 计算保密容量
 
         pass
 
@@ -333,6 +379,26 @@ class MultiUbsRsmaEvn:
         pass
 
     def get_env_info(self):
+        obs = self.get_obs_size()
+        gt_features_dim = obs['gt'][1]
+        other_features_dim = obs['agent'] + np.prod(obs['ubs'])
+        env_info = dict(gt_features_dim=gt_features_dim,
+                        other_features_dim=other_features_dim,
+                        state_shape=self.get_state_size(),
+                        n_moves=self.n_moves,
+                        n_powers=self.n_powers,
+                        n_agents=self.n_agents,
+                        episode_limit=self.episode_length)
+        
+        return env_info
+
+    def sercurity_model(self):
+        # stage 1：第一阶段，以无人机为单位窃听公有信息，而私有信息针对到每个GT
+        for k in range(self.n_uav):
+            for e in range(self.)        
+        
+        # stage 2：第二阶段，以社区为单位窃听公共信息，而私有信息针对到每个GT
+
         pass
 
     def get_uav_trajectory(self):
@@ -353,9 +419,6 @@ class MultiUbsRsmaEvn:
     def get_throughput_gt(self):
         pass
 
-    def sercurity_model(self):
-        pass
-
     def get_obs(self) -> list:
         pass
 
@@ -363,7 +426,7 @@ class MultiUbsRsmaEvn:
         pass
 
     def get_obs_size(self) -> dict:
-        pass
+        return dict(agent=self.obs_own_feats_size, ubs=self.obs_ubs_feats_size, gt=self.obs_gt_feats_size)
 
     @property
     def obs_own_feats_size(self) -> int:
@@ -381,13 +444,27 @@ class MultiUbsRsmaEvn:
         pass
 
     def get_state_size(self) -> int:
-        pass
+        return np.prod(self.state_ubs_feats_size()) + np.prod(self.state_gt_feats_size())
 
     def state_ubs_feats_size(self) -> tuple:
-        pass
+        """
+        State of each UBS includes
+        - Normalized distance (x, y)
+        - Normalized Security Sum Rate(SSR)
+        """
+        su_fs = 2 + 1
+
+        return self.n_uav, su_fs
 
     def state_gt_feats_size(self) -> tuple:
-        pass
+        """
+        tate of each GT includes
+        - Normalized position (x, y)
+        - Normalized QoS
+        """
+        sg_fs = 2 + 1
+
+        return self.n_gts, sg_fs
 
     def get_reward(self, reward_scale_rate) -> float:
         pass
@@ -402,9 +479,6 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--n_uav', type=int, default=4, help='the number of UAV')
-    parser.add_argument('--n_gt', type=int, default=20, help='the number of Gt') 
-    parser.add_argument('--n_eve', type=int, default=2, help='the number of Eve')
     parser.add_argument('--apply_small_fading', type=bool, default=False)
     parser.add_argument('--cov_range', type=float, default=50, help='coverage range (m)')
     parser.add_argument('--comm_range', type=float, default=np.inf, help='communication range (m)')
