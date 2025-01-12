@@ -344,7 +344,6 @@ class MultiUbsRsmaEvn:
         self.map_info = self.map.get_map()
         self.pos_ubs = self.map_info['pos_ubs'] # 初始化位置
         self.pos_gts = self.map_info['pos_gts'] # 每个episode随机生成
-        self.gts_in_community = self.map_info['gts_in_community']
         self.pos_eve = self.map_info['pos_eves'] # 初始化位置
 
         self.reward = 0
