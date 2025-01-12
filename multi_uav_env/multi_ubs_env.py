@@ -57,7 +57,7 @@ class MultiUbsRsmaEvn:
         self.sche_U2E = np.zeros((self.n_uav, self.n_eve), dtype=bool)
 
         self.gt_serv_by = np.zeros((self.n_gt), dtype=np.int32) # gt i被那个无人机服务
-        self.uav_serv_gt = np.array([[] for _ in range(self.n_uav)]) # 无人机k服务的GT
+        self.uav_serv_gt = None # 无人机k服务的GT
 
         self.t = 1  # 时间步
 
@@ -91,11 +91,13 @@ class MultiUbsRsmaEvn:
 
         # 数据速率
         self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32) # 第一阶段直传的公共信息速率
-        self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
-        self.comm_rate_U2E = np.zeros((self.n_eve, self.n_gt), dtype=np.float32)
-        self.priv_rate_U2E = np.zeros((self.n_eve, self.n_gt), dtype=np.float32)   
-        self.comm_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
-        self.priv_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
+        self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
+        self.priv_rate_E7G = np.zeros((self.n_eve, self.n_gt), dtype=np.float32) # Eve窃听GT的私有信息
+        
+        self.secrecy_rate_c_k_t = np.zeros((self.n_uav), dtype=np.float32)
+        self.secrecy_rate_p_i_t = np.zeros((self.n_gt), dtype=np.float32)
+        # self.comm_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
+        # self.priv_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
         # self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
         # self.priv_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
 
@@ -107,8 +109,8 @@ class MultiUbsRsmaEvn:
         self.total_throughput_t = 0
         self.total_throughput = 0
         self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
-        self.rate_gt = np.zeros(self.n_gts, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
-        self.ssr_gt_rate = np.zeros(self.n_gts, np.float32)  # 计算GT的累积SSR
+        self.rate_gt = np.zeros(self.n_gt, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
+        self.ssr_gt_rate = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
 
 
     def update_dist_conn(self) -> None:
@@ -157,12 +159,14 @@ class MultiUbsRsmaEvn:
 
         self.sche_U2G = np.zeros((self.n_uav, self.n_gt))
         self.gt_serv_by = np.zeros((self.n_gt), dtype=np.int32)
+        self.uav_serv_gt = [[] for k in range(self.n_uav)]  # UAV k 服务的GT
         for i in range(self.n_gt):
             gt_becov[i] = sorted(gt_becov[i], key=lambda k: self.H_U2G_norm_2[k][i], reverse=True)
             for k in gt_becov[i]:
                 if sum(self.sche_U2G[k]) < self.serv_capacity:
                     self.sche_U2G[k][i] = 1 # UAV 服务 GT i
                     self.gt_serv_by[i] = k
+                    self.uav_serv_gt[k].append(i)
                     break
 
         # 如果不服务那就取消信道，因为要根据有无信道来判断是否被服务，从而从社区总选出信道最好的用户
@@ -219,7 +223,6 @@ class MultiUbsRsmaEvn:
         """stage 1: 直接传输阶段"""
         # stage 1: 计算 UAV->GTs 公共信息速率
         self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
-        self.comm_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
         for i in range(self.n_gt):
             serv_flag = False
             n = self.n0 * self.bw
@@ -228,16 +231,14 @@ class MultiUbsRsmaEvn:
                     s = self.H_U2G_norm_2[k][i] * self.p_tx_c * sum(self.sche_U2G[k]) # 公有信号
                     n = n + self.H_U2G_norm_2[k][i] * self.p_tx_p * sum(self.sche_U2G[k]) # 本无人机的所有私有作为干扰
                     serv_flag = True
-                else:
+                else: # 其他无人机的干扰
                     n = n + self.cov_U2G[k][i] * self.H_U2G_norm_2[k][i] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2G[k]) # 系统间干扰 (其他无人机)
             if serv_flag:
                 # 计算香农容量
                 self.comm_rate_U2G[k][i] = self.shannon_capacity(s, n)
-                self.comm_rate_gt[i] = self.comm_rate_U2G[k][i]
 
         # stage 1: 计算 UAV->GTs 私有信息速率
         self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
-        self.priv_rate_gt = np.zeros((self.n_gt), dtype=np.float32)
         for i in range(self.n_gt):
             serv_flag = False
             n = self.n0 * self.bw # 本地噪声
@@ -251,11 +252,9 @@ class MultiUbsRsmaEvn:
             if serv_flag:
                 # 计算香农容量
                 self.priv_rate_U2G[k][i] = self.shannon_capacity(s, n)
-                self.priv_rate_gt[i] = self.priv_rate_U2G[k][i]
 
         # stage 1: 计算 UAV->Eve 公有信息速率
         self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
-        # self.comm_rate_eve = np.zeros((self.n_eve), dtype=np.float32)
         for e in range(self.n_eve):
             n = self.n0 * self.bw # 本地噪声
             for k in range(self.n_uav):
@@ -266,75 +265,64 @@ class MultiUbsRsmaEvn:
                         if self.sche_U2E[l][e] == 1 and l != k:
                             n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2E[l])
                     self.comm_rate_U2E[k][e] = self.shannon_capacity(s, n)
-                    # self.comm_rate_eve[e] = self.comm_rate_U2E[k][e]
                      
         # stage 1: 计算 UAV->Eve 私有信息速率
-        self.priv_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32) 
-        for e in range(self.n_eve):
-            n = self.n0 * self.bw # 本地噪声
-            for k in range(self.n_uav):
-                if self.sche_U2E[k][e] == 1:
-                    s = self.H_U2E_norm_2[k][e] * self.p_tx_p
-                    n = n + self.H_G2E_norm_2[k][e] * (self.p_tx_c * sum(self.sche_U2E[k]) +  # 本无人机的公有
-                                                       self.p_tx_p * (sum(self.sche_U2E[k]) - 1)) # 本无人机的其他私有作为干扰
-                    for l in range(self.n_uav): # 其他无人机的干扰  
+        self.priv_rate_E7G = np.zeros((self.n_eve, self.n_gt), dtype=np.float32) 
+        for k in range(self.n_uav):
+            n = self.n0 * self.bw
+            len_uav_serv = len(self.uav_serv_gt[k])
+            for e in range(self.n_eve):
+                if self.sche_U2E[k][e] == 1: # Eve e正在窃听无人机UAV k
+                    for l in range(self.n_uav): # 其他无人机的干扰
                         if self.sche_U2E[l][e] == 1 and l != k:
-                            n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2E[l])
-                    self.priv_rate_U2E[k][e] = self.shannon_capacity(s, n)
-                    # self.priv_rate_eve[e] = self.priv_rate_U2E[k][e]
+                            n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * len(self.uav_serv_gt[l])
+ 
+                    for i in self.uav_serv_gt[k]: # 窃听无人机服务的GT
+                        s = self.H_U2E_norm_2[k][e] * self.p_tx_p
+                        n = n + self.H_U2E_norm_2[k][e] * (self.p_tx_c * len_uav_serv +  # 本无人机的公有
+                                                       self.p_tx_p * (len_uav_serv - 1)) # 本无人机的其他私有作为干扰
+                        self.priv_rate_E7G[e][i] = self.shannon_capacity(s, n)
 
         """stage 2: 转发传输阶段
-            TODO: 其中每个无人机cell中信道质量最好的GT,采用解码转发的方式, 转发信息给其他GT, 最后就是一个无人机一个公共信息计算，然后私有信息分别计算。
+            其中每个无人机cell中信道质量最好的GT,采用解码转发的方式, 转发信息给其他GT, 最后就是一个无人机一个公共信息计算，然后私有信息分别计算。
         """
         # stage 2: 计算GT->GT的速率 
         # 首先在每一个无人机cell中需要先找一个信道质量最好的对无人机cell外的
         best_gt_in_cell = np.zeros(self.n_uav, dtype=np.int32)
         for k in range(self.n_uav):
-            if sum(self.sche_U2G[k]) != 0:
-                pass 
-                
-        for m in range(self.n_uav):
-            if len(self.gts_in_community[m]) != 0:
-                best_gt_in_cell[m] = max(self.gts_in_community[m], key=lambda i: self.gt_norm_2[i])
+            if len(self.uav_serv_gt[k]) != 0:
+                best_gt_in_cell[k] = max(self.uav_serv_gt[k], key=lambda i: self.gt_norm_2[i])
 
-        # i直接转发所有信息（只转发给社区中被同一个无人机服务的）
-        for m in range(self.n_community):
-            i = best_gt_in_community[m]
-            n = self.bw * self.n0
-            k = self.gt_serv_by[i] # 最好的i被k服务
-            e = m
-            num_gt_in_community = len(self.gts_in_community[m])
-            # j的公有信息速率为
-            for j in self.gts_in_community[m]:
-                if j != i:
-                    s = self.H_G2G_norm_2[i][j] * self.p_forward_c * (num_gt_in_community - 1)
-                    n = n + (self.H_G2G_norm_2[i][j] * self.p_forward_p * num_gt_in_community + 
-                             self.cov_U2G[k][j] * self.H_U2G_norm_2[k][j] * jamming_power[k])
-                    self.comm_rate_gt[i] += self.shannon_capacity(s, n)
-            # eve的公有信息速率为
-            s_eve = self.H_G2E_norm_2[i][e] * self.p_forward_c * (num_gt_in_community - 1)
-            n_eve = self.bw * self.n0 + (self.H_G2E_norm_2[i][e] * self.p_forward_p * num_gt_in_community + 
-                                         self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])
-            # self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
-            
-        for m in range(self.n_community):
-            i = best_gt_in_community[m]
-            n = self.bw * self.n0
-            k = self.gt_serv_by[i] # 最好的i被k服务
-            num_gt_in_community = len(self.gts_in_community[m])
-            # j的私有信息速率为
-            for j in self.gts_in_community[m]:
-                if j != i:
-                    s = self.H_G2G_norm_2[i][j] * self.p_forward_p
-                    n = n + (self.H_G2G_norm_2[i][j] * self.p_forward_p * (num_gt_in_community - 1) + 
-                             self.cov_U2G[k][j] * self.H_U2G_norm_2[k][j] * jamming_power[k])
-                    self.priv_rate_gt[i] += self.shannon_capacity(s, n)
-            # eve的私有信息速率为
-            s_eve = self.H_G2E_norm_2[i][e] * self.p_forward_p
-            n_eve = self.bw * self.n0 + (self.H_G2E_norm_2[i][e] * self.p_forward_p * (num_gt_in_community - 1) +
-                     self.H_G2E_norm_2[i][e] * self.p_forward_c * num_gt_in_community + 
-                     self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])
-            # self.comm_rate_eve[i] += self.shannon_capacity(s_eve, n_eve)
+        for k in range(self.n_uav): # 每个无人机cell中信道最好的用户转发，计算公有信息和私有信息
+            i_forward = best_gt_in_cell[k]
+            n = self.n0 * self.bw
+            num_gt_in_cell_k = len(self.uav_serv_gt[k])
+            # GT->GT
+            for i in self.uav_serv_gt[k]:
+                if i != i_forward:
+                    s_c = self.H_G2G_norm_2[i_forward][i] * self.p_forward_c * (num_gt_in_cell_k - 1)
+                    n_c = n + (self.H_G2G_norm_2[i_forward][i] * self.p_forward_p * num_gt_in_cell_k + 
+                             self.cov_U2G[k][i] * self.H_U2G_norm_2[k][i] * jamming_power[k])
+                    self.comm_rate_U2G[k][i] += self.shannon_capacity(s_c, n_c) # k cell中的GT i的公有信息速率
+
+                    s_p = self.H_G2G_norm_2[i_forward][i] * self.p_forward_p
+                    n_p = n + (self.H_G2G_norm_2[i_forward][i] * self.p_forward_p * (num_gt_in_cell_k - 1) + 
+                                 self.cov_U2G[k][i] * self.H_U2G_norm_2[k][i] * jamming_power[k])
+                    self.priv_rate_U2G[k][i] += self.shannon_capacity(s_p, n_p) # k cell中的GT i的私有信息速率
+                
+                if self.sche_U2E[k][e] == 1: # e在k的Cell中
+                    s_eve_c = self.H_G2E_norm_2[i_forward][e] * self.p_forward_c * num_gt_in_cell_k
+                    n_eve_c = n + (self.H_G2E_norm_2[i_forward][e] * self.p_forward_p * num_gt_in_cell_k + 
+                               self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])
+                    self.comm_rate_U2E[k][e] += self.shannon_capacity(s_eve_c, n_eve_c) # k cell中的Eve e的公有信息速率
+
+                    s_eve_p = self.H_G2E_norm_2[i_forward][e] * self.p_forward_p
+                    n_eve_p = n + (self.H_G2E_norm_2[i_forward][e] * self.p_forward_p * (num_gt_in_cell_k - 1) +  # 私有
+                                   self.H_G2E_norm_2[i_forward][e] * self.p_forward_c * num_gt_in_cell_k +  # 公有
+                                   self.sche_U2E[k][e] * self.H_U2E_norm_2[k][e] * jamming_power[k])        # 干扰      
+
+                    self.priv_rate_E7G[e][i] += self.shannon_capacity(s_eve_p, n_eve_p)
+        
 
     def shannon_capacity(self, s, n):
         # 计算香农容量 (Mbps)
@@ -351,8 +339,8 @@ class MultiUbsRsmaEvn:
         self.total_throughput_t = 0
         self.total_throughput = 0
         self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
-        self.rate_gt = np.zeros(self.n_gts, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
-        self.ssr_gt_rate = np.zeros(self.n_gts, np.float32)  # 计算GT的累积SSR
+        self.rate_gt = np.zeros(self.n_gt, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
+        self.ssr_gt_rate = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
         self.map_info = self.map.get_map()
         self.pos_ubs = self.map_info['pos_ubs'] # 初始化位置
         self.pos_gts = self.map_info['pos_gts'] # 每个episode随机生成
@@ -363,7 +351,7 @@ class MultiUbsRsmaEvn:
         self.mean_returns = 0
         self.reward_scale = 0.1
         self.ssr_system_rate = 0.0
-        self.aver_rate_per_gt = np.zeros(self.n_gts, dtype=np.float32)
+        self.aver_rate_per_gt = np.zeros(self.n_gt, dtype=np.float32)
         self.rate_per_ubs_t = np.zeros(self.n_uav, dtype=np.float32)
 
         self.update_dist_conn() # 初始距离、关联关系、生成信道
@@ -393,13 +381,19 @@ class MultiUbsRsmaEvn:
         return env_info
 
     def sercurity_model(self):
-        # stage 1：第一阶段，以无人机为单位窃听公有信息，而私有信息针对到每个GT
+        # Eve以cell k为单位进行计算窃听
+        self.secrecy_rate_c_k_t = np.zeros((self.n_uav), dtype=np.float32)
         for k in range(self.n_uav):
-            for e in range(self.)        
-        
-        # stage 2：第二阶段，以社区为单位窃听公共信息，而私有信息针对到每个GT
+            # 计算公有
+            k_cell = self.uav_serv_gt[k]
+            self.secrecy_rate_c_k_t[k] = max(0.0, np.min(self.comm_rate_U2G[k_cell]) - np.max(self.comm_rate_U2E[k]))
 
-        pass
+        self.secrecy_rate_p_i_t = np.zeros((self.n_gt), dtype=np.float32)       
+        for k in range(self.n_uav):
+            for i in self.uav_serv_gt[k]:
+                for e in range(self.n_eve):
+                    if self.sche_U2E[k][e] == 1:
+                        self.secrecy_rate_p_i_t[i] = max(0.0, self.priv_rate_U2G[k][i] - np.max(self.priv_rate_E7G[e]))
 
     def get_uav_trajectory(self):
         pass
@@ -464,7 +458,7 @@ class MultiUbsRsmaEvn:
         """
         sg_fs = 2 + 1
 
-        return self.n_gts, sg_fs
+        return self.n_gt, sg_fs
 
     def get_reward(self, reward_scale_rate) -> float:
         pass
