@@ -21,11 +21,12 @@ class MultiUbsRsmaEvn:
     safe_dist = 5 # 无人机之间的安全距离 (m)
 
     def __init__(self, args) -> None:
+        self.avoid_collision = args.avoid_collision
+        self.penlty = args.penlty
+
         self.cov_range = args.cov_range  # 覆盖范围
         self.comm_range = args.comm_range # 通信范围
         self.serv_capacity = args.serv_capacity # 服务范围
-
-        self.range_pos = args.range_pos # 场景范围
         
         self.apply_small_fading = args.apply_small_fading # 是否应用小尺度衰落
 
@@ -91,6 +92,7 @@ class MultiUbsRsmaEvn:
 
         # 数据速率
         self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32) # 第一阶段直传的公共信息速率
+        self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
         self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
         self.priv_rate_E7G = np.zeros((self.n_eve, self.n_gt), dtype=np.float32) # Eve窃听GT的私有信息
         
@@ -106,12 +108,43 @@ class MultiUbsRsmaEvn:
         self.jamming_power_list = []
         self.ssr_list = []
         self.throughput_list = []
-        self.total_throughput_t = 0
-        self.total_throughput = 0
-        self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
-        self.rate_gt = np.zeros(self.n_gt, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
-        self.ssr_gt_rate = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
+        self.fair_idx_list = []
 
+        self.episo_return = np.zeros(self.n_uav, dtype=np.float32)
+        self.mean_returns = 0
+        
+        # 最大数据速率用于归一化
+        g_atg_max = self.atg_chan_model.estimate_chan_gain(d_level=0.00000000000001, h_ubs=self.h_ubs)
+        self.snr_c_atg_max = self.p_tx_c * self.n_gt * np.power(abs(g_atg_max), 2) / (self.n0 * self.bw)  # UAV->GTs common info
+        self.snr_p_atg_max = self.p_tx_p * self.n_gt * np.power(abs(g_atg_max), 2) / (self.n0 * self.bw)  # UAV->GTs private info
+        self.snr_c_gtg_max = self.p_forward_c * (self.n_gt - 1) * np.power(abs(1), 2) / (self.n0 * self.bw)  # GT->GTs common info
+        self.snr_p_gtg_max = self.p_forward_p * (self.n_gt - 1) * np.power(abs(1), 2) / (self.n0 * self.bw)  # GT->GTs common info
+        self.achievable_rate_c_ubs_max = self.bw * np.log(1 + self.snr_c_atg_max) * 1e-6
+        self.achievable_rate_p_ubs_max = self.bw * np.log(1 + self.snr_p_atg_max) * 1e-6
+        self.achievable_rate_c_gts_max = self.bw * (np.log(1 + self.snr_c_atg_max) + np.log(1 + self.snr_c_gtg_max)) * 1e-6
+        self.achievable_rate_p_gts_max = self.bw * (np.log(1 + self.snr_p_atg_max) * 1e-6 + np.log(1 + self.snr_p_gtg_max)) * 1e-6
+        self.achievable_rate_gts_max = self.achievable_rate_c_gts_max + self.achievable_rate_p_gts_max
+        self.achievable_rate_ubs_max = self.achievable_rate_c_ubs_max + self.achievable_rate_p_ubs_max
+
+        # 全局指标
+        self.fair_idx_t = None # 实时公平因子
+        self.avg_epi_fair_index = None # 每个episode平均公平因子
+        
+        self.throughput_t = None # 实时吞吐量
+        self.throughput = None # 总吞吐量
+        self.avg_epi_throughput = None # 每个episode平均吞吐量
+
+        self.sec_rate_t = None # 实时安全容量
+        self.avg_epi_sec_rate = None # 每个episode平均吞吐量
+        self.sec_rate = 0 # 总实时安全容量
+        self.sec_rate_gt = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
+
+        self.rate_gt_t = np.zeros((self.n_gt), dtype=np.float32) # 每个GT的实时吞吐量
+        self.avg_epi_rate_gt = np.zeros((self.n_gt), dtype=np.float32) # 每个GT在一个episode的平均吞吐量
+
+        self.rate_ubs_t = np.zeros((self.n_uav), dtype=np.float32) # 每个无人机的数据速率
+
+        self.global_util = 0 # 全局效用
 
     def update_dist_conn(self) -> None:
         # UAV与GT
@@ -323,10 +356,58 @@ class MultiUbsRsmaEvn:
 
                     self.priv_rate_E7G[e][i] += self.shannon_capacity(s_eve_p, n_eve_p)
         
+    def cal_glo_metric(self):
+        """
+        计算所需要的所有全局指标：
+            实时公平因子: fair_index_t
+            每个episode平均公平因子: avg_epi_fair_index
+            
+            GT实时数据吞吐: rate_gt_t
+            GT每个episode平均数据吞吐: avg_epi_rate_gt
 
+            实时吞吐量: throughput_t
+            总吞吐量: throughput
+            每个episode平均吞吐量: avg_epi_throughput
+
+            实时安全容量: sec_rate_t
+            每个episode平均吞吐量: avg_epi_sec_rate
+            每个episode的总安全容量: sec_rate
+            每个episode中GT的总安全容量: sec_rate_gt
+
+            每个无人机的实时速率: rate_ubs_t
+
+            全局效用: global_util
+
+        """
+        for k in range(self.n_uav):
+            for i in range(self.n_gt):
+                if self.sche_U2G[k][i]:
+                    self.rate_gt_t[i] = (self.comm_rate_U2G[k][i] + self.priv_rate_U2G[k][i])
+                    self.rate_ubs_t[k] = self.rate_ubs_t[k] + self.rate_gt_t[i]
+                    self.sec_rate_gt[i] = self.secrecy_rate_c_k_t[k] + self.secrecy_rate_p_i_t[i]
+
+        self.avg_epi_rate_gt = (self.avg_epi_rate_gt * self.t + self.rate_gt_t) / (self.t + 1)
+
+        self.fair_idx_t = compute_jain_fairness_index(self.avg_epi_rate_gt)
+        self.avg_epi_fair_index = (self.avg_epi_fair_index * self.t + self.fair_idx_t) / (self.t + 1)
+        
+        self.throughput_t = self.rate_gt_t.sum()
+        self.avg_epi_throughput = (self.avg_epi_throughput * self.t + self.throughput_t) / (self.t + 1)
+        self.throughput = self.throughput + self.throughput_t
+        
+        self.sec_rate_t = self.secrecy_rate_c_k_t.sum() + self.secrecy_rate_p_i_t.sum()
+        self.avg_epi_sec_rate = (self.avg_epi_sec_rate * self.t + self.sec_rate_t) / (self.t + 1)
+        self.sec_rate = self.sec_rate + self.sec_rate_t # 总实时安全容量
+
+        self.global_util = self.global_util + self.fair_idx_t * self.sec_rate_t
+
+        
     def shannon_capacity(self, s, n):
         # 计算香农容量 (Mbps)
         return self.bw * np.log2(1 + s / n) * 1e-6
+
+    def collision_detection(self):
+        self.mask_collision = ((self.dis_U2U + 99999 * np.eye(self.n_uav)) < self.safe_dist).any(1)
 
     def reset(self):
         self.uav_traj = []
@@ -334,13 +415,24 @@ class MultiUbsRsmaEvn:
         self.ssr_list = []
         self.throughput_list = []
         self.fair_idx_list = []
+        # 全局数据初始化
+        self.fair_idx_t = 0 # 实时公平因子
+        self.avg_epi_fair_index = 0 # 每个episode平均公平因子
+        self.throughput_t = 0 # 实时吞吐量
+        self.avg_epi_throughput = 0 # 每个episode平均吞吐量
+        self.throughput = 0 # 每个episode的总吞吐量
+        self.sec_rate_t = 0 # 实时安全容量
+        self.avg_epi_sec_rate = 0 # 每个episode平均吞吐量
+        self.sec_rate = 0 # 总实时安全容量
+        self.sec_rate_gt = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
+        self.rate_gt_t = np.zeros((self.n_gt), dtype=np.float32) # 每个GT的实时吞吐量，用于计算公平因子
+        self.avg_epi_rate_gt = 0
+        self.rate_ubs_t = np.zeros((self.n_uav), dtype=np.float32) # 每个无人机的数据速率
+        self.global_util = 0
+        
         # 初始化环境
         self.t = 1
-        self.total_throughput_t = 0
-        self.total_throughput = 0
-        self.ep_ret = np.zeros(self.n_uav, dtype=np.float32)
-        self.rate_gt = np.zeros(self.n_gt, dtype=np.float32)  # 计算GT的累积数据速率 (Mbps)
-        self.ssr_gt_rate = np.zeros(self.n_gt, np.float32)  # 计算GT的累积SSR
+        self.episo_return = np.zeros(self.n_uav, dtype=np.float32)
         self.map_info = self.map.get_map()
         self.pos_ubs = self.map_info['pos_ubs'] # 初始化位置
         self.pos_gts = self.map_info['pos_gts'] # 每个episode随机生成
@@ -349,21 +441,66 @@ class MultiUbsRsmaEvn:
         self.reward = 0
         self.mean_returns = 0
         self.reward_scale = 0.1
-        self.ssr_system_rate = 0.0
-        self.aver_rate_per_gt = np.zeros(self.n_gt, dtype=np.float32)
-        self.rate_per_ubs_t = np.zeros(self.n_uav, dtype=np.float32)
 
         self.update_dist_conn() # 初始距离、关联关系、生成信道
-        
+        self.collision_detection() # 碰撞检测
         jamming_power = np.array([0 for _ in range(self.n_uav)])
         self.transmit_data(jamming_power=jamming_power)  # 传输数据
         self.sercurity_model()  # 计算保密容量
+        self.cal_glo_metric() # 计算指标: 吞吐量、奖励因子、安全容量
 
-        pass
+        obs = wrapper_obs(self.get_obs())
+
+        state = wrapper_state(self.get_state())
+
+        init_info = dict(range_pos=self.range_pos,
+                         uav_init_pos=self.pos_ubs,
+                         eve_init_pos=self.pos_eve,
+                         gts_init_pos=self.pos_gts)
+
+        return obs, state, init_info
+
 
     def step(self, actions):
-        self.t = self.t + 1
-        pass
+        self.t = self.t + 1 # 时间步+1
+        action_moves = actions['moves']
+        action_powers = actions['powers']
+        moves = self.avail_moves[np.array(action_moves, dtype=int)]  # 所有无人机的移动
+        jamming_powers = self.avail_jamming_powers[np.array(action_powers, dtype=int)]  # 所有无人机的干扰功率
+        self.pos_ubs = np.clip(self.pos_ubs + moves,
+                               a_min=0,
+                               a_max=self.range_pos)
+        
+        self.update_dist_conn() # 更新距离与信道
+        self.collision_detection() # 碰撞检测
+        self.transmit_data(jamming_power=jamming_powers) # 传输数据
+        self.sercurity_model() # 计算安全模型
+        self.cal_glo_metric() # 计算指标: 吞吐量、奖励因子、安全容量
+        reward = self.get_reward(self.reward_scale) # 计算奖励
+        self.episo_return = self.episo_return + reward # 计算回合累积回报
+        self.mean_returns = self.mean_returns + reward.mean() # 计算回合平均回报
+        done = self.get_terminate()
+        info = dict(EpRet=self.episo_return, # TODO
+                    EpLen=self.t,
+                    mean_returns=self.mean_returns,  # episode的平均汇报
+                    total_throughput=self.throughput,  # episode的总吞吐量
+                    Ssr_Sys=self.sec_rate,  # 系统安全容量
+                    global_util=self.global_util, # 全局效用
+                    avg_fair_idx_per_episode=self.avg_epi_fair_index)  # 系统公平因子
+        obs = wrapper_obs(self.get_obs())
+        state = wrapper_state(self.get_state())
+        # Mark whether termination of episode is caused by reaching episode limit.
+        info['BadMask'] = True if (self.t == self.episode_length) else False
+        
+        # 绘图所需数据
+        self.uav_traj.append(self.pos_ubs)
+        self.jamming_power_list.append(jamming_powers)
+        self.fair_idx_list.append(self.fair_idx_t)
+        self.ssr_list.append(self.sec_rate_t)
+        self.throughput_list.append(self.throughput_t)
+        
+        return obs, state, reward, done, info
+
 
     def get_env_info(self):
         obs = self.get_obs_size()
@@ -394,47 +531,95 @@ class MultiUbsRsmaEvn:
                     if self.sche_U2E[k][e] == 1:
                         self.secrecy_rate_p_i_t[i] = max(0.0, self.priv_rate_U2G[k][i] - np.max(self.priv_rate_E7G[e]))
 
-    def get_uav_trajectory(self):
-        pass
-
-    def get_jamming_power(self):
-        pass
-
-    def get_fair_index(self):
-        pass
-
-    def get_ssr(self):
-        pass
-
-    def get_throughput(self):
-        pass
-
-    def get_throughput_gt(self):
-        pass
+    def get_all_data(self):
+        return dict(traj=self.uav_traj,
+                    jamming_power=self.jamming_power_list,
+                    fair_idx=self.fair_idx_list,
+                    sec_rate=self.ssr_list,
+                    throughput=self.throughput_list)
 
     def get_obs(self) -> list:
-        pass
+        return [self.get_obs_agent(agent_id) for agent_id in range(self.n_agents)]
 
     def get_obs_agent(self, agent_id: int) -> dict:
-        pass
+        """Returns local observation of specified agent as a dict."""
+        own_feats = np.zeros(self.obs_own_feats_size, dtype=np.float32)
+        ubs_feats = np.zeros(self.obs_ubs_feats_size, dtype=np.float32)
+        gt_feats = np.zeros(self.obs_gt_feats_size, dtype=np.float32)
+
+        # own feats
+        own_feats[0:2] = self.pos_ubs[agent_id] / self.range_pos
+        own_feats[2] = (self.secrecy_rate_c_k_t[agent_id] + self.secrecy_rate_p_i_t[self.uav_serv_gt[agent_id]].sum())
+
+        # UBS features
+        other_ubs = [ubs_id for ubs_id in range(self.n_agents) if ubs_id != agent_id]
+        for j, ubs_id in enumerate(other_ubs):
+            if self.cov_U2U[agent_id][ubs_id]:
+                ubs_feats[j, 0] = 1  # vis flag
+                ubs_feats[j, 1:3] = (self.pos_ubs[ubs_id] - self.pos_ubs[agent_id]) / self.range_pos  # relative pos
+
+        # GTs features
+        for i in range(self.n_gt):
+            if self.cov_U2G[agent_id][i]:
+                gt_feats[i, 0] = 1  # vision flag
+                gt_feats[i, 1:3] = (self.pos_gts[i] - self.pos_ubs[agent_id]) / self.range_pos  # relative pos
+                gt_feats[i, 3] = self.sec_rate_gt[i] / self.achievable_rate_gts_max 
+
+        return dict(agent=own_feats, ubs=ubs_feats, gt=gt_feats)
+        
 
     def get_obs_size(self) -> dict:
         return dict(agent=self.obs_own_feats_size, ubs=self.obs_ubs_feats_size, gt=self.obs_gt_feats_size)
 
     @property
     def obs_own_feats_size(self) -> int:
-        pass
+        """
+        Features of agent itself include:
+        - Normalized position (x, y)
+        - Normalized Security Sum Rate(SSR)
+        """
+        o_fs = 2 + 1
+        return o_fs
 
     @property
     def obs_ubs_feats_size(self) -> tuple:
-        pass
+        """
+        Observed features of each UBS include
+        - Visibility flag 0 or 1
+        - Normalized distance (x, y) when visible
+        """
+        u_fs = 1 + 2
+        return self.n_agents - 1, u_fs
 
     @property
     def obs_gt_feats_size(self) -> tuple:
-        pass
+        """
+        - Visibility flag 1
+        - Normalized distance (x, y) when visible 2
+        - Normalized instance QoS 1
+        # - Normalized instance ssr gt rate 1
+        """
+        gt_fs = 1 + 2 + 1
+
+        return self.n_gts, gt_fs
 
     def get_state(self) -> np.ndarray:
-        pass
+        """
+        Returns features of all UBSs and GTs as global drqn_env state.
+        Note that state is only used for centralized training and should be inaccessible during inference.
+        """
+        ubs_feats = np.zeros(self.state_ubs_feats_size(), dtype=np.float32)
+        gt_feats = np.zeros(self.state_gt_feats_size(), dtype=np.float32)
+
+        # Features of UBSs
+        ubs_feats[:, 0:2] = self.pos_ubs / self.range_pos
+        ubs_feats[:, 2] = self.ssr_ubsk_t / self.achievable_rate_ubs_max
+
+        # Features of GTs
+        gt_feats[:, 0:2] = self.pos_gts / self.range_pos
+        gt_feats[:, 2] = self.rate_gt_t / self.achievable_rate_gts_max
+
+        return np.concatenate((ubs_feats.flatten(), gt_feats.flatten()))
 
     def get_state_size(self) -> int:
         return np.prod(self.state_ubs_feats_size()) + np.prod(self.state_gt_feats_size())
@@ -460,10 +645,19 @@ class MultiUbsRsmaEvn:
         return self.n_gt, sg_fs
 
     def get_reward(self, reward_scale_rate) -> float:
-        pass
+        ubs_rewards = self.fair_idx_t * self.sec_rate_t * np.ones(self.n_agents, dtype=np.float32)
+        ubs_rewards = reward_scale_rate * ubs_rewards / self.achievable_rate_ubs_max
+        idle_ubs_mask = (self.rate_ubs_t == 0)  
+        ubs_rewards = ubs_rewards * (1 - idle_ubs_mask)  # 空闲无人机不能获得奖励
+        
+        if self.avoid_collision:
+            ubs_rewards = ubs_rewards - self.mask_collision * self.penlty
+        
+        return ubs_rewards
+
 
     def get_terminate(self) -> bool:
-        pass
+        return True if (self.t == self.episode_length) else False
 
 if __name__ == '__main__':
     set_rand_seed(seed=10)

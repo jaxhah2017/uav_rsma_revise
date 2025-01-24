@@ -3,5 +3,8 @@ import numpy as np
 if __name__ == '__main__':
     n_uav = 3
     
-    x = np.array([1, 3, 5, 0.4])
-    print(max(0, 0.5-1))
+    a = np.array([[0, 4, 7], 
+               [4, 0, 8],
+               [7, 8, 0]])
+    
+    print(a[1].sum())

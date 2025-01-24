@@ -79,6 +79,51 @@ def train(args, train_kwards: dict = dict()):
         a, h2, inference_time = learner.take_actions(o, h, eps_thres(t))
         # Call environment step.
         o2, s2, r, d, info = env.step(a)
+        # Store experience to replay buffer.
+        learner.cache(o, h, s, a, r, o2, h2, s2, d, info.get("BadMask"))
+        # Move to next timestep.
+        o, s, h = o2, s2, h2
+        # Reach the end of an episode.
+        if d:
+            episode += 1  # On episode completes.
+            ep_ret_list.append(info["EpRet"])
+            writer.add_scalar("train environment/avg fairness index",
+                              info["avg_fair_idx_per_episode"] / args.episode_length, episode)
+            writer.add_scalar("train environment/total throughput", info["total_throughput"], episode)
+            writer.add_scalar("train returns/mean returns", info["mean_returns"], episode)
+            for agt in range(args.n_ubs):
+                writer.add_scalar("train returns/agent{} ep_ret".format(agt), info["EpRet"][agt], episode)
+            print(
+                "智能体与环境交互第{}次, ep_ret = {}, total_throughput={}, average fair_idx = {}, ssr_system_rate = {}".
+                format(
+                    episode,
+                    info['EpRet'],
+                    info["total_throughput"],
+                    info['avg_fair_idx_per_episode'] / args.episode_length,
+                    info['Ssr_Sys']))
+            (o, s, init_info), h = env.reset(), learner.init_hidden()  # Reset drqn_env and RNN hidden states.
+        if (t >= update_after) and (t % update_every == 0):
+            # print("--------------------learner update--------------------")
+            updates += 1
+            diagnostic = learner.update()
+            # End of epoch handling
+        if (t + 1) % args.steps_per_epoch == 0:
+            epoch = (t + 1) // args.steps_per_epoch
+            # Test performance of trained agents.
+            returns_mean = test_agent(test_agents, args.num_test_episodes)
+            test_p_ret.append(returns_mean)
+            test_agents += 1
+            # Anneal learning rate.
+            if learner.anneal_lr:
+                learner.lr_scheduler.step()
+            # Save model parameters.
+            if (epoch % args.save_freq == 0) or (epoch == args.epochs):
+                save_path = args.output_dir + '/checkpoints/checkpoint_epoch{}.pt'.format(epoch)
+                learner.save_model(save_path, stamp=dict(epoch=epoch, t=t))
+                save_var(var_path=args.output_dir + '/vars/test_p_ret', var=test_p_ret)
+                save_var(var_path=args.output_dir + '/vars/ep_ret_list', var=ep_ret_list)
+    writer.close()
+    print("Complete.")
 
 if __name__ == '__main__':
 
@@ -126,6 +171,8 @@ if __name__ == '__main__':
     parser.add_argument('--fair_service', type=bool, default=True, help='fair service')
     parser.add_argument('--n_powers', type=int, default=10, help='the number of power level')
     parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions')
+    parser.add_argument('--avoid_collision', type=bool, default=True, help='Whether to calculate collision penalty')
+    parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
     
     
     args = parser.parse_args()
