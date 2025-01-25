@@ -25,7 +25,7 @@ class AirToGroundChannel(object):
         # Estimate probability of LoS link emergence.
         p_los = 1 / (1 + self.a * np.exp(-self.b * (np.arctan(h_ubs / (d_level + 1e-5)) - self.a)))
         # Get direct link distance.
-        d = np.sqrt(np.square(d_level) + np.square(h_ubs))
+        d = np.sqrt(np.square(d_level) + np.square(h_ubs)) + 0.0000000000000000000000000000000000000000000001
         # Compute free space path loss (FSPL).
         fspl = (4 * np.pi * self.fc * d / 3e8) ** 2
         # Path loss is the weighted average of LoS and NLoS cases.
@@ -54,6 +54,7 @@ class GroundToGroundChannel(object):
     def estimate_chan_gain(self, d: float) -> float:
         """channel gain"""
         """large scale"""
+        d = d + 0.0000000000000000000000000000001
         fspl = (4 * np.pi * self.fc * d / 3e8) ** 2
         h = 1 / fspl
         

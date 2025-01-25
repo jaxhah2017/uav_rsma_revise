@@ -54,7 +54,7 @@ def train(args, train_kwards: dict = dict()):
         with torch.no_grad():
             """Tests the performance of trained agents."""
             returns_mean = []
-            returns = np.zeros(args.n_ubs, dtype=np.float32)
+            returns = np.zeros(env_info['n_ubs'], dtype=np.float32)
             for n in range(args.num_test_episodes):
                 reward = 0
                 (o, _, init_info), h, d = test_env.reset(), learner.init_hidden(), False  # Reset drqn_env and RNN.
@@ -64,7 +64,7 @@ def train(args, train_kwards: dict = dict()):
                 returns += info["EpRet"]
                 returns_mean.append(info["EpRet"].mean())
             returns /= num_test_episodes
-            for agt in range(args.n_ubs):
+            for agt in range(env_info['n_ubs']):
                 writer.add_scalar("evaluate returns/agent{} ep_ret".format(agt), returns[agt], test_agents)
 
             return returns_mean
@@ -91,7 +91,7 @@ def train(args, train_kwards: dict = dict()):
                               info["avg_fair_idx_per_episode"] / args.episode_length, episode)
             writer.add_scalar("train environment/total throughput", info["total_throughput"], episode)
             writer.add_scalar("train returns/mean returns", info["mean_returns"], episode)
-            for agt in range(args.n_ubs):
+            for agt in range(env_info['n_ubs']):
                 writer.add_scalar("train returns/agent{} ep_ret".format(agt), info["EpRet"][agt], episode)
             print(
                 "智能体与环境交互第{}次, ep_ret = {}, total_throughput={}, average fair_idx = {}, ssr_system_rate = {}".
@@ -171,10 +171,9 @@ if __name__ == '__main__':
     parser.add_argument('--fair_service', type=bool, default=True, help='fair service')
     parser.add_argument('--n_powers', type=int, default=10, help='the number of power level')
     parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions')
-    parser.add_argument('--avoid_collision', type=bool, default=True, help='Whether to calculate collision penalty')
+    parser.add_argument('--avoid_collision', type=bool, default=False, help='Whether to calculate collision penalty')
     parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
-    
-    
+
     args = parser.parse_args()
 
     train_kwargs ={}
