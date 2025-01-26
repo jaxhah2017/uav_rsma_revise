@@ -136,7 +136,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=10, help='random seed')
     parser.add_argument('--batch_size', type=int, default=128, help='batch size')
     parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
-    parser.add_argument('--epochs', type=int, default=200, help='epochs')
+    parser.add_argument('--epochs', type=int, default=100, help='epochs')
 
     # 智能体设置
     parser.add_argument('--n_layers', type=int, default=2, help='Number of layers of agent')

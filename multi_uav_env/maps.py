@@ -81,16 +81,16 @@ class General4uavMap:
             self.pos_gts[i] = [x, y]
 
     def set_ubs(self):
-        # self.pos_ubs[0] = [80, 80]
-        # self.pos_ubs[1] = [320, 80]
-        # self.pos_ubs[2] = [80, 320]
-        # self.pos_ubs[3] = [320, 320]
+        self.pos_ubs[0] = [80, 80]
+        self.pos_ubs[1] = [320, 80]
+        self.pos_ubs[2] = [80, 320]
+        self.pos_ubs[3] = [320, 320]
 
         # DEBUG
-        self.pos_ubs[0] = [150, 150]
-        self.pos_ubs[1] = [250, 150]
-        self.pos_ubs[2] = [150, 250]
-        self.pos_ubs[3] = [260, 260]
+        # self.pos_ubs[0] = [150, 150]
+        # self.pos_ubs[1] = [250, 150]
+        # self.pos_ubs[2] = [150, 250]
+        # self.pos_ubs[3] = [260, 260]
 
     def get_map(self):
         self.set_eve()
@@ -165,6 +165,9 @@ class General2uavMap:
 
         return self.__dict__
 
+
+map = {'General4uavMap': General4uavMap, 
+       'General2uavMap': General2uavMap}
 
 if __name__ == '__main__':
     np.random.seed(10)

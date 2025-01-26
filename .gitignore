@@ -4,6 +4,7 @@
 ### others ### 
 *.png
 mha_drqn_data/
+.pickle
 
 ### Vscode ###
 .vscode

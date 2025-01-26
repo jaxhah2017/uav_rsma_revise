@@ -405,7 +405,7 @@ class MultiUbsRsmaEvn:
         
     def shannon_capacity(self, s, n):
         # 计算香农容量 (Mbps)
-        return self.bw * np.log2(1 + s / n) * 1e-6
+        return self.bw * np.log(1 + s / n) * 1e-6
 
     def collision_detection(self):
         self.mask_collision = ((self.dis_U2U + 99999 * np.eye(self.n_uav)) < self.safe_dist).any(1)
@@ -502,6 +502,13 @@ class MultiUbsRsmaEvn:
         
         return obs, state, reward, done, info
 
+
+    def get_data(self):
+        return dict(traj=self.uav_traj,
+                    jamming=self.jamming_power_list,
+                    fair_idx=self.fair_idx_list,
+                    secrecy_rate=self.ssr_list,
+                    throughput=self.throughput_list)
 
     def get_env_info(self):
         obs = self.get_obs_size()
