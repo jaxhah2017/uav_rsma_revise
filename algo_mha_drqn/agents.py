@@ -4,7 +4,7 @@ import math
 
 
 class Agents(nn.Module):
-    def __init__(self, gt_features_dim, num_heads, other_features_dim, move_dim, power_dim, n_layers=2, hidden_size=256):
+    def __init__(self, gt_features_dim, num_heads, other_features_dim, move_dim, power_dim, theta_dim, n_layers=2, hidden_size=256):
         super(Agents, self).__init__()
         self._n_layers = n_layers
         self._hidden_size = hidden_size
@@ -18,6 +18,7 @@ class Agents(nn.Module):
 
         self.move_head = nn.Linear(self._hidden_size, move_dim)
         self.power_head = nn.Linear(self._hidden_size, power_dim)
+        self.theta_head = nn.Linear(self._hidden_size, theta_dim) # test
 
     def init_hidden(self):
         return torch.zeros(1, self._hidden_size)
@@ -33,8 +34,9 @@ class Agents(nn.Module):
 
         move = self.move_head(h)
         power = self.power_head(h)
+        theta = self.theta_head(h)
 
-        return move, power, h
+        return move, power, theta, h # test
 
 
 if __name__ == '__main__':
@@ -60,8 +62,6 @@ if __name__ == '__main__':
 
     # 模型向前传播
     output = agent(gt_features, other_features, hidden_state)
-    print(output)
-    # print("Output Shape", output[0].shape)
-    # print(agent)
+    print(output[2])
 
 

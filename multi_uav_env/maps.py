@@ -92,9 +92,10 @@ class General4uavMap:
         # self.pos_ubs[2] = [150, 250]
         # self.pos_ubs[3] = [260, 260]
 
-    def get_map(self):
+    def get_map(self, flag: int = 0):
         self.set_eve()
-        self.set_gts()
+        if flag == 1:
+            self.set_gts()
         self.set_ubs()
 
         return self.__dict__
@@ -158,9 +159,10 @@ class General2uavMap:
         self.pos_ubs[0] = [80, 80]
         self.pos_ubs[1] = [320, 80]
 
-    def get_map(self):
+    def get_map(self, flag: int = 0):
         self.set_eve()
-        self.set_gts()
+        if flag == 1:
+            self.set_gts()
         self.set_ubs()
 
         return self.__dict__

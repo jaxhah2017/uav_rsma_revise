@@ -90,6 +90,10 @@ class MultiUbsRsmaEvn:
         self.avail_jamming_powers = 1e-3 * np.power(10, self.avail_jamming_powers / 10)  # to w
         self.n_moves = self.avail_moves.shape[0]    
 
+        self.avail_theta = np.arange(0, 1.25, 0.25) # test
+        self.n_thetas = len(self.avail_theta) # test
+
+
         # 数据速率
         self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32) # 第一阶段直传的公共信息速率
         self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
@@ -249,7 +253,7 @@ class MultiUbsRsmaEvn:
                 self.H_G2E[i][e] = g
                 self.H_G2E_norm_2[i][e] = np.linalg.norm(g) ** 2
     
-    def transmit_data(self, jamming_power):
+    def transmit_data(self, jamming_power, thetas):
         """stage 1: 直接传输阶段"""
         # stage 1: 计算 UAV->GTs 公共信息速率
         self.comm_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
@@ -265,7 +269,7 @@ class MultiUbsRsmaEvn:
                     n = n + self.cov_U2G[k][i] * self.H_U2G_norm_2[k][i] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2G[k]) # 系统间干扰 (其他无人机)
             if serv_uav != -1:
                 # 计算香农容量
-                self.comm_rate_U2G[serv_uav][i] = self.shannon_capacity(s, n)
+                self.comm_rate_U2G[serv_uav][i] = thetas[serv_uav] * self.shannon_capacity(s, n)
 
         # stage 1: 计算 UAV->GTs 私有信息速率
         self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
@@ -281,7 +285,7 @@ class MultiUbsRsmaEvn:
                     n = n + self.cov_U2G[k][i] * self.H_U2G_norm_2[k][i] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2G[k]) # 系统间干扰 (其他无人机)
             if serv_uav != -1:
                 # 计算香农容量
-                self.priv_rate_U2G[serv_uav][i] = self.shannon_capacity(s, n)
+                self.priv_rate_U2G[serv_uav][i] = thetas[serv_uav] * self.shannon_capacity(s, n)
 
         # stage 1: 计算 UAV->Eve 公有信息速率
         self.comm_rate_U2E = np.zeros((self.n_uav, self.n_eve), dtype=np.float32)
@@ -294,7 +298,7 @@ class MultiUbsRsmaEvn:
                     for l in range(self.n_uav): # 其他无人机的干扰
                         if self.sche_U2E[l][e] == 1 and l != k:
                             n = n + self.H_U2E_norm_2[l][e] * (self.p_tx_c + self.p_tx_p) * sum(self.sche_U2E[l])
-                    self.comm_rate_U2E[k][e] = self.shannon_capacity(s, n)
+                    self.comm_rate_U2E[k][e] = thetas[k] * self.shannon_capacity(s, n)
                      
         # stage 1: 计算 UAV->Eve 私有信息速率
         self.priv_rate_E7G = np.zeros((self.n_eve, self.n_gt), dtype=np.float32) 
@@ -311,7 +315,7 @@ class MultiUbsRsmaEvn:
                         s = self.H_U2E_norm_2[k][e] * self.p_tx_p
                         n = n + self.H_U2E_norm_2[k][e] * (self.p_tx_c * len_uav_serv +  # 本无人机的公有
                                                        self.p_tx_p * (len_uav_serv - 1)) # 本无人机的其他私有作为干扰
-                        self.priv_rate_E7G[e][i] = self.shannon_capacity(s, n)
+                        self.priv_rate_E7G[e][i] = thetas[k] * self.shannon_capacity(s, n)
 
         """stage 2: 转发传输阶段
             其中每个无人机cell中信道质量最好的GT,采用解码转发的方式, 转发信息给其他GT, 最后就是一个无人机一个公共信息计算，然后私有信息分别计算。
@@ -334,20 +338,20 @@ class MultiUbsRsmaEvn:
                     n_c = n + self.H_G2G_norm_2[i_forward][i] * self.p_forward_p * num_gt_in_cell_k
                     for l in range(self.n_uav):
                         n_c = n_c + self.cov_U2G[l][i] * self.H_U2G_norm_2[l][i] * jamming_power[l]
-                    self.comm_rate_U2G[k][i] += self.shannon_capacity(s_c, n_c) # k cell中的GT i的公有信息速率
+                    self.comm_rate_U2G[k][i] += (1 - thetas[k]) * self.shannon_capacity(s_c, n_c) # k cell中的GT i的公有信息速率
 
                     s_p = self.H_G2G_norm_2[i_forward][i] * self.p_forward_p
                     n_p = n + self.H_G2G_norm_2[i_forward][i] * self.p_forward_p * (num_gt_in_cell_k - 1)
                     for l in range(self.n_uav):
                         n_p = n_p + self.cov_U2G[l][i] * self.H_U2G_norm_2[l][i] * jamming_power[l]
-                    self.priv_rate_U2G[k][i] += self.shannon_capacity(s_p, n_p) # k cell中的GT i的私有信息速率
+                    self.priv_rate_U2G[k][i] += (1 - thetas[k]) * self.shannon_capacity(s_p, n_p) # k cell中的GT i的私有信息速率
             for e in range(self.n_eve):
                 if self.sche_U2E[k][e] == 1: # e在k的Cell中
                     s_eve_c = self.H_G2E_norm_2[i_forward][e] * self.p_forward_c * num_gt_in_cell_k
                     n_eve_c = n + self.H_G2E_norm_2[i_forward][e] * self.p_forward_p * num_gt_in_cell_k
                     for l in range(self.n_uav):
                         n_eve_c = n_eve_c + self.sche_U2E[l][e] * self.H_U2E_norm_2[l][e] * jamming_power[l]
-                    self.comm_rate_U2E[k][e] += self.shannon_capacity(s_eve_c, n_eve_c) # k cell中的Eve e的公有信息速率
+                    self.comm_rate_U2E[k][e] += (1 - thetas[k]) * self.shannon_capacity(s_eve_c, n_eve_c) # k cell中的Eve e的公有信息速率
 
                     s_eve_p = self.H_G2E_norm_2[i_forward][e] * self.p_forward_p
                     n_eve_p = n + (self.H_G2E_norm_2[i_forward][e] * self.p_forward_p * (num_gt_in_cell_k - 1) +  # 私有
@@ -355,7 +359,7 @@ class MultiUbsRsmaEvn:
                     for l in range(self.n_uav):
                         n_eve_p = n_eve_p + self.sche_U2E[l][e] * self.H_U2E_norm_2[l][e] * jamming_power[l] # 干扰
 
-                    self.priv_rate_E7G[e][i] += self.shannon_capacity(s_eve_p, n_eve_p)
+                    self.priv_rate_E7G[e][i] += (1 - thetas[k]) * self.shannon_capacity(s_eve_p, n_eve_p)
         
     def cal_glo_metric(self):
         """
@@ -434,10 +438,10 @@ class MultiUbsRsmaEvn:
         # 初始化环境
         self.t = 1
         self.episo_return = np.zeros(self.n_uav, dtype=np.float32)
-        self.map_info = self.map.get_map()
+        self.map_info = self.map.get_map(flag=1)
         self.pos_ubs = self.map_info['pos_ubs'] # 初始化位置
         self.pos_gts = self.map_info['pos_gts'] # 每个episode随机生成
-        self.pos_eve = self.map_info['pos_eves'] # 初始化位置
+        self.pos_eves = self.map_info['pos_eves'] # 初始化位置
 
         self.reward = 0
         self.mean_returns = 0
@@ -446,7 +450,8 @@ class MultiUbsRsmaEvn:
         self.update_dist_conn() # 初始距离、关联关系、生成信道
         self.collision_detection() # 碰撞检测
         jamming_power = np.array([0 for _ in range(self.n_uav)])
-        self.transmit_data(jamming_power=jamming_power)  # 传输数据
+        thetas = np.array([0.5 for _ in range(self.n_uav)])
+        self.transmit_data(jamming_power=jamming_power, thetas=thetas)  # 传输数据
         self.sercurity_model()  # 计算保密容量
         self.cal_glo_metric() # 计算指标: 吞吐量、奖励因子、安全容量
 
@@ -456,7 +461,7 @@ class MultiUbsRsmaEvn:
 
         init_info = dict(range_pos=self.range_pos,
                          uav_init_pos=self.pos_ubs,
-                         eve_init_pos=self.pos_eve,
+                         eve_init_pos=self.pos_eves,
                          gts_init_pos=self.pos_gts)
 
         return obs, state, init_info
@@ -466,15 +471,17 @@ class MultiUbsRsmaEvn:
         self.t = self.t + 1 # 时间步+1
         action_moves = actions['moves']
         action_powers = actions['powers']
+        action_thetas = actions['thetas']
         moves = self.avail_moves[np.array(action_moves, dtype=int)]  # 所有无人机的移动
         jamming_powers = self.avail_jamming_powers[np.array(action_powers, dtype=int)]  # 所有无人机的干扰功率
+        thetas = self.avail_theta[np.array(action_thetas, dtype=int)] # 所有无人机的传输间隙
         self.pos_ubs = np.clip(self.pos_ubs + moves,
                                a_min=0,
                                a_max=self.range_pos)
         
         self.update_dist_conn() # 更新距离与信道
         self.collision_detection() # 碰撞检测
-        self.transmit_data(jamming_power=jamming_powers) # 传输数据
+        self.transmit_data(jamming_power=jamming_powers, thetas=thetas) # 传输数据
         self.sercurity_model() # 计算安全模型
         self.cal_glo_metric() # 计算指标: 吞吐量、奖励因子、安全容量
         reward = self.get_reward(self.reward_scale) # 计算奖励
@@ -520,6 +527,7 @@ class MultiUbsRsmaEvn:
                         state_shape=self.get_state_size(),
                         n_moves=self.n_moves,
                         n_powers=self.n_powers,
+                        n_thetas=self.n_thetas,
                         n_agents=self.n_agents,
                         episode_limit=self.episode_length)
         

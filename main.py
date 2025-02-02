@@ -134,9 +134,9 @@ if __name__ == '__main__':
     parser.add_argument('--cuda_deterministic', type=bool, default=False, help='cuda_deterministic')
     parser.add_argument('--cuda_index', type=int, default=0, help='Cuda Index')
     parser.add_argument('--seed', type=int, default=10, help='random seed')
-    parser.add_argument('--batch_size', type=int, default=128, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=256, help='batch size')
     parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
-    parser.add_argument('--epochs', type=int, default=100, help='epochs')
+    parser.add_argument('--epochs', type=int, default=200, help='epochs')
 
     # 智能体设置
     parser.add_argument('--n_layers', type=int, default=2, help='Number of layers of agent')
@@ -171,14 +171,14 @@ if __name__ == '__main__':
     parser.add_argument('--fair_service', type=bool, default=True, help='fair service')
     parser.add_argument('--n_powers', type=int, default=10, help='the number of power level')
     parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions')
-    parser.add_argument('--avoid_collision', type=bool, default=False, help='Whether to calculate collision penalty')
+    parser.add_argument('--avoid_collision', type=bool, default=True, help='Whether to calculate collision penalty')
     parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
 
     args = parser.parse_args()
 
-    train_kwargs ={}
-
-    # train_kwargs = {"map": General2uavMap}
+    train_kwargs = {'map': General4uavMap,
+                    'avoid_collision': True,
+                    'hidden_size': 128}
 
     train(args, train_kwargs)
 

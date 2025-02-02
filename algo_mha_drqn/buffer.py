@@ -1,7 +1,7 @@
 import random
 from collections import deque
 
-scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'rew', 'done'}
+scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'act_thetas', 'rew', 'done'}
 
 class ReplayBuffer(object):
     """Replay buffer for current agents"""
