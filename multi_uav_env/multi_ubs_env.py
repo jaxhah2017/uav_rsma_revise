@@ -32,6 +32,8 @@ class MultiUbsRsmaEvn:
 
         self.episode_length = args.episode_length # 每个episode的长度
 
+        self.theta_opt = args.theta_opt # 是否优化theta
+
         # 地图map、位置信息
         self.map = args.map()
         self.map_params = self.map.get_map()
@@ -90,7 +92,7 @@ class MultiUbsRsmaEvn:
         self.avail_jamming_powers = 1e-3 * np.power(10, self.avail_jamming_powers / 10)  # to w
         self.n_moves = self.avail_moves.shape[0]    
 
-        self.avail_theta = np.arange(0, 1.25, 0.25) # test
+        self.avail_theta = np.arange(0.25, 1.25, 0.25) # test
         self.n_thetas = len(self.avail_theta) # test
 
 
@@ -109,6 +111,7 @@ class MultiUbsRsmaEvn:
         self.ssr_list = []
         self.throughput_list = []
         self.fair_idx_list = []
+        self.theta_list = []
 
         self.episo_return = np.zeros(self.n_uav, dtype=np.float32)
         self.mean_returns = 0
@@ -270,6 +273,7 @@ class MultiUbsRsmaEvn:
             if serv_uav != -1:
                 # 计算香农容量
                 self.comm_rate_U2G[serv_uav][i] = thetas[serv_uav] * self.shannon_capacity(s, n)
+                
 
         # stage 1: 计算 UAV->GTs 私有信息速率
         self.priv_rate_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32)
@@ -420,6 +424,7 @@ class MultiUbsRsmaEvn:
         self.ssr_list = []
         self.throughput_list = []
         self.fair_idx_list = []
+        self.theta_list = []
         # 全局数据初始化
         self.fair_idx_t = 0 # 实时公平因子
         self.avg_epi_fair_index = 0 # 每个episode平均公平因子
@@ -450,7 +455,7 @@ class MultiUbsRsmaEvn:
         self.update_dist_conn() # 初始距离、关联关系、生成信道
         self.collision_detection() # 碰撞检测
         jamming_power = np.array([0 for _ in range(self.n_uav)])
-        thetas = np.array([0.5 for _ in range(self.n_uav)])
+        thetas = [0.5 for _ in range(self.n_uav)]
         self.transmit_data(jamming_power=jamming_power, thetas=thetas)  # 传输数据
         self.sercurity_model()  # 计算保密容量
         self.cal_glo_metric() # 计算指标: 吞吐量、奖励因子、安全容量
@@ -471,10 +476,13 @@ class MultiUbsRsmaEvn:
         self.t = self.t + 1 # 时间步+1
         action_moves = actions['moves']
         action_powers = actions['powers']
-        action_thetas = actions['thetas']
+        if self.theta_opt:
+            action_thetas = actions['thetas']
         moves = self.avail_moves[np.array(action_moves, dtype=int)]  # 所有无人机的移动
         jamming_powers = self.avail_jamming_powers[np.array(action_powers, dtype=int)]  # 所有无人机的干扰功率
-        thetas = self.avail_theta[np.array(action_thetas, dtype=int)] # 所有无人机的传输间隙
+        thetas = [0.5 for _ in range(self.n_uav)]
+        if self.theta_opt:
+            thetas = self.avail_theta[np.array(action_thetas, dtype=int)] # 所有无人机的传输间隙
         self.pos_ubs = np.clip(self.pos_ubs + moves,
                                a_min=0,
                                a_max=self.range_pos)
@@ -506,6 +514,7 @@ class MultiUbsRsmaEvn:
         self.fair_idx_list.append(self.fair_idx_t)
         self.ssr_list.append(self.sec_rate_t)
         self.throughput_list.append(self.throughput_t)
+        self.theta_list.append(thetas)
         
         return obs, state, reward, done, info
 
@@ -515,6 +524,7 @@ class MultiUbsRsmaEvn:
                     jamming=self.jamming_power_list,
                     fair_idx=self.fair_idx_list,
                     secrecy_rate=self.ssr_list,
+                    thetas = self.theta_list, 
                     throughput=self.throughput_list)
 
     def get_env_info(self):

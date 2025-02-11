@@ -239,3 +239,21 @@ def plot_throughput(epi_throughput, pic_save_path):
     plt.xlim((0, len(epi_throughput) + 1))
 
     plt.savefig(pic_save_path + '/epi_throughput.png', dpi=600)
+
+def plot_opt_theta(epi_theta, pic_save_path):
+    color = ['r', 'g', 'b', 'y']
+    plt.cla()
+    plt.figure(figsize=(7, 6))
+    episode_length = len(epi_theta)
+    epi_theta = np.array(epi_theta)
+    indices = np.array(range(0, episode_length))
+    print(len(epi_theta))
+    for _ in range(len(epi_theta[0])):
+        plt.plot(indices, epi_theta[:, _], label=f'UAV {_}', color=color[_])
+    plt.legend(loc="best")
+    plt.title("Optimal Theta")
+    plt.xlabel("Time Step")
+    plt.ylabel("Optimal Theta")
+    plt.xlim((0, len(epi_theta) + 1))
+
+    plt.savefig(pic_save_path + '/epi_theta.png', dpi=600)

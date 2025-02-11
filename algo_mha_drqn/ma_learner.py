@@ -30,6 +30,7 @@ class MultiAgentQLearner:
         self.gt_features_dim = env_info['gt_features_dim']
         self.other_features_dim = env_info['other_features_dim']
         self.n_heads = args.n_heads
+        self.theta_opt = args.theta_opt
         self.state_shape = env_info['state_shape']
         self.n_moves = env_info['n_moves']
         self.n_powers = env_info['n_powers']
@@ -42,6 +43,7 @@ class MultiAgentQLearner:
                                  move_dim=self.n_moves,
                                  power_dim=self.n_powers,
                                  theta_dim=self.n_thetas,
+                                 theta_opt=self.theta_opt,
                                  n_layers=args.n_layers,
                                  hidden_size=args.hidden_size).to(self.device)  # Policy Network
         self.target_net = Agents(gt_features_dim=self.gt_features_dim,
@@ -50,6 +52,7 @@ class MultiAgentQLearner:
                                  move_dim=self.n_moves,
                                  power_dim=self.n_powers,
                                  theta_dim=self.n_thetas,
+                                 theta_opt=self.theta_opt,
                                  n_layers=args.n_layers,
                                  hidden_size=args.hidden_size).to(self.device)  # Target Network
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -70,7 +73,7 @@ class MultiAgentQLearner:
         self.polyak = args.polyak  # Interpolation factor in polyak averaging for target networks
         self.batch_size = args.batch_size  # Mini-batch size for SGD
 
-        self.buffer = ReplayBuffer(args.replay_size, self.max_seq_len)  # Replay buffer
+        self.buffer = ReplayBuffer(args.replay_size, self.max_seq_len, self.theta_opt)  # Replay buffer
         self.loss_fn = nn.MSELoss()  # Loss function
         self.optimizer = AdamW(self.params, lr=args.lr)  # Optimizer
         self.anneal_lr = args.anneal_lr  # Whether lr annealing is used.
@@ -88,27 +91,28 @@ class MultiAgentQLearner:
         obs_other_features = obs[0].to(self.device)
         obs_gt_features = obs[1].to(self.device)
         h = h.to(self.device)
-        # gt_features = np.ones((1, 20, 4)).astype(np.float32)
-        # other_features = np.ones((1, 24)).astype(np.float32)
-        # hidden_state = np.zeros((1, 256)).astype(np.float32)
-        # obs_gt_features = torch.from_numpy(gt_features).to(self.device)
-        # obs_other_features = torch.from_numpy(other_features).to(self.device)
-        # h = torch.from_numpy(hidden_state).to(self.device)
         with torch.no_grad():
             start_time = time.time()
-            move_logits, power_logits, thetas_logits, h = self.policy_net(obs_gt_features, obs_other_features, h)
+            if self.theta_opt:
+                move_logits, power_logits, thetas_logits, h = self.policy_net(obs_gt_features, obs_other_features, h)
+            else:
+                move_logits, power_logits, h = self.policy_net(obs_gt_features, obs_other_features, h)
             end_time = time.time()
-        # if random.random() > eps_thres:
         if random.random() > eps_thres:
             moves = torch.argmax(move_logits, 1)
             powers = torch.argmax(power_logits, 1)
-            thetas = torch.argmax(thetas_logits, 1)
+            if self.theta_opt:
+                thetas = torch.argmax(thetas_logits, 1)
         else:
             moves = torch.randint(self.n_moves, size=(self.n_agents,), dtype=torch.long)
             powers = torch.randint(self.n_powers, size=(self.n_agents,), dtype=torch.long)
-            thetas = torch.randint(self.n_thetas, size=(self.n_agents,), dtype=torch.long)
+            if self.theta_opt:
+                thetas = torch.randint(self.n_thetas, size=(self.n_agents,), dtype=torch.long)
 
-        acts = dict(moves=moves.tolist(), powers=powers.tolist(), thetas=thetas.tolist())
+        if self.theta_opt:
+            acts = dict(moves=moves.tolist(), powers=powers.tolist(), thetas=thetas.tolist())
+        else:
+            acts = dict(moves=moves.tolist(), powers=powers.tolist())
 
         return acts, h, end_time - start_time
 
@@ -121,18 +125,31 @@ class MultiAgentQLearner:
         next_obs_gt_features = next_obs[1]
 
         # When done is True due to reaching episode limit, mute it.
-        transition = dict(obs_other_features=obs_other_features,
-                          obs_gt_features=obs_gt_features,
-                          h=h,
-                          state=state,
-                          act_moves=torch.tensor(act['moves'], dtype=torch.long).unsqueeze(1),
-                          act_powers=torch.tensor(act['powers'], dtype=torch.long).unsqueeze(1),
-                          act_thetas=torch.tensor(act['thetas'], dtype=torch.long).unsqueeze(1),
-                          rew=torch.tensor(rew, dtype=torch.float32).reshape(1, -1),
-                          next_obs_other_features=next_obs_other_features,
-                          next_obs_gt_features=next_obs_gt_features,
-                          next_h=(1 - done) * next_h, next_state=next_state,
-                          done=torch.tensor((1 - bad_mask) * done, dtype=torch.float32).reshape(1, 1))
+        if self.theta_opt:
+            transition = dict(obs_other_features=obs_other_features,
+                            obs_gt_features=obs_gt_features,
+                            h=h,
+                            state=state,
+                            act_moves=torch.tensor(act['moves'], dtype=torch.long).unsqueeze(1),
+                            act_powers=torch.tensor(act['powers'], dtype=torch.long).unsqueeze(1),
+                            act_thetas=torch.tensor(act['thetas'], dtype=torch.long).unsqueeze(1),
+                            rew=torch.tensor(rew, dtype=torch.float32).reshape(1, -1),
+                            next_obs_other_features=next_obs_other_features,
+                            next_obs_gt_features=next_obs_gt_features,
+                            next_h=(1 - done) * next_h, next_state=next_state,
+                            done=torch.tensor((1 - bad_mask) * done, dtype=torch.float32).reshape(1, 1))
+        else:
+            transition = dict(obs_other_features=obs_other_features,
+                            obs_gt_features=obs_gt_features,
+                            h=h,
+                            state=state,
+                            act_moves=torch.tensor(act['moves'], dtype=torch.long).unsqueeze(1),
+                            act_powers=torch.tensor(act['powers'], dtype=torch.long).unsqueeze(1),
+                            rew=torch.tensor(rew, dtype=torch.float32).reshape(1, -1),
+                            next_obs_other_features=next_obs_other_features,
+                            next_obs_gt_features=next_obs_gt_features,
+                            next_h=(1 - done) * next_h, next_state=next_state,
+                            done=torch.tensor((1 - bad_mask) * done, dtype=torch.float32).reshape(1, 1))
         self.buffer.push(transition)
 
     def update(self):
@@ -156,97 +173,121 @@ class MultiAgentQLearner:
         # acts = torch.stack(batch['act']).to(self.device)
         act_moves = torch.stack(batch['act_moves']).to(self.device)
         act_powers = torch.stack(batch['act_powers']).to(self.device)
-        act_thetas = torch.stack(batch['act_thetas']).to(self.device)
+        if self.theta_opt:
+            act_thetas = torch.stack(batch['act_thetas']).to(self.device)
         rews = torch.stack(batch['rew']).to(self.device)
         dones = torch.stack(batch['done']).to(self.device)
         h, h_targ = batch['h'][0].to(self.device), batch['h'][1].to(self.device)  # Get initial hidden states.
 
         agent_out_moves = []
         agent_out_powers = []
-        agent_out_thetas = []
+        if self.theta_opt:
+            agent_out_thetas = []
         target_out_moves = []
         target_out_powers = []
-        target_out_thetas = []
-        # agent_out, target_out = [], []
+        if self.theta_opt:
+            target_out_thetas = []
         obs_other_features = [batch['obs_other_features'][t].to(self.device) for t in range(len(batch['obs_other_features']))]
         obs_gt_features = [batch['obs_gt_features'][t].to(self.device) for t in range(len(batch['obs_gt_features']))]
-        # obs = [batch['obs'][t].to(self.device) for t in range(len(batch['obs']))]
 
 
         for t in range(self.max_seq_len):
             # Policy network predicts the Q(s_{t},a_{t}) at current timestep.
-            # move_logits, power_logits, h = self.policy_net(obs[t], h)
-            move_logits, power_logits, theta_logits, h = self.policy_net(obs_gt_features[t],
+            if self.theta_opt:
+                move_logits, power_logits, theta_logits, h = self.policy_net(obs_gt_features[t], obs_other_features[t], h)
+            else:
+                move_logits, power_logits, h = self.policy_net(obs_gt_features[t],
                                                            obs_other_features[t],
                                                            h)
             agent_out_moves.append(move_logits)
             agent_out_powers.append(power_logits)
-            agent_out_thetas.append(theta_logits)
-            # agent_out.append([move_logits, power_logits])
+            if self.theta_opt:
+                agent_out_thetas.append(theta_logits)
             # Target network predicts Q(s_{t+1}, a_{t+1}).
             with torch.no_grad():
-                next_move_logits, next_power_logits, next_theta_logits, h_targ = self.target_net(obs_gt_features[t + 1],
+                if self.theta_opt:
+                    next_move_logits, next_power_logits, next_theta_logits, h_targ = self.target_net(obs_gt_features[t + 1],
+                                                                                obs_other_features[t + 1],
+                                                                                h_targ)
+                else:
+                    next_move_logits, next_power_logits, h_targ = self.target_net(obs_gt_features[t + 1],
                                                                               obs_other_features[t + 1],
                                                                               h_targ)
                 # target_out.append([next_move_logits, next_power_logits])
                 target_out_moves.append(next_move_logits)
                 target_out_powers.append(next_power_logits)
-                target_out_thetas.append(next_theta_logits)
+                if self.theta_opt:
+                    target_out_thetas.append(next_theta_logits)
 
         # Let policy network make predictions for next state of the last timestep in the sequence.
-        # move_logits, power_logits, h = self.policy_net(obs[self.max_seq_len], h)
-        move_logits, power_logits, theta_logits, h = self.policy_net(obs_gt_features[self.max_seq_len],
-                                                       obs_other_features[self.max_seq_len],
-                                                       h)
+        if self.theta_opt:
+            move_logits, power_logits, theta_logits, h = self.policy_net(obs_gt_features[self.max_seq_len],
+                                                        obs_other_features[self.max_seq_len],
+                                                        h)
+        else:
+            move_logits, power_logits, h = self.policy_net(obs_gt_features[self.max_seq_len],
+                                                        obs_other_features[self.max_seq_len],
+                                                        h)
 
         agent_out_moves.append(move_logits)
         agent_out_powers.append(power_logits)
-        agent_out_thetas.append(theta_logits)
+        if self.theta_opt:
+            agent_out_thetas.append(theta_logits)
         # Stack outputs of policy/target networks.
-        agent_out_moves, agent_out_powers, agent_out_thetas = torch.stack(agent_out_moves), torch.stack(agent_out_powers), torch.stack(agent_out_thetas)
-        target_out_moves, target_out_powers, target_out_thetas = torch.stack(target_out_moves), torch.stack(target_out_powers), torch.stack(target_out_thetas)
-        # agent_out, target_out = torch.stack(agent_out), torch.stack(target_out)
+        if self.theta_opt:
+            agent_out_moves, agent_out_powers, agent_out_thetas = torch.stack(agent_out_moves), torch.stack(agent_out_powers), torch.stack(agent_out_thetas)
+            target_out_moves, target_out_powers, target_out_thetas = torch.stack(target_out_moves), torch.stack(target_out_powers), torch.stack(target_out_thetas)
+        else:
+            agent_out_moves, agent_out_powers = torch.stack(agent_out_moves), torch.stack(agent_out_powers)
+            target_out_moves, target_out_powers = torch.stack(target_out_moves), torch.stack(target_out_powers)
 
         # Compute Q_{s_{t}, a_{t}} with policy network.
         q_moves_val = agent_out_moves[:-1].gather(2, act_moves)
         q_powers_val = agent_out_powers[:-1].gather(2, act_powers)
-        q_thetas_val = agent_out_thetas[:-1].gather(2, act_thetas)
-        # qvals = agent_out[:-1].gather(2, acts)
+        if self.theta_opt:
+            q_thetas_val = agent_out_thetas[:-1].gather(2, act_thetas)
         # Compute V_{s_{t+1}}.
         if not self.double_q:
             next_moves_val = target_out_moves.max(2, keepdim=True)[0]
             next_powers_val = target_out_powers.max(2, keepdim=True)[0]
-            next_thetas_val = target_out_thetas.max(2, keepdim=True)[0]
+            if self.theta_opt:
+                next_thetas_val = target_out_thetas.max(2, keepdim=True)[0]
         else:
             next_moves = torch.argmax(agent_out_moves[1:].clone().detach(), dim=2, keepdim=True)
             next_powers = torch.argmax(agent_out_powers[1:].clone().detach(), dim=2, keepdim=True)
-            next_thetas = torch.argmax(agent_out_thetas[1:].clone().detach(), dim=2, keepdim=True)
+            if self.theta_opt:
+                next_thetas = torch.argmax(agent_out_thetas[1:].clone().detach(), dim=2, keepdim=True)
             next_moves_val = target_out_moves.gather(2, next_moves)
             next_powers_val = target_out_powers.gather(2, next_powers)
-            next_thetas_val = target_out_thetas.gather(2, next_thetas)
+            if self.theta_opt:
+                next_thetas_val = target_out_thetas.gather(2, next_thetas)
 
         q_moves_val = q_moves_val.view(self.max_seq_len, self.batch_size, self.n_agents)
         q_powers_val = q_powers_val.view(self.max_seq_len, self.batch_size, self.n_agents)
-        q_thetas_val = q_thetas_val.view(self.max_seq_len, self.batch_size, self.n_agents)
-        # qvals = qvals.view(self.max_seq_len, self.batch_size, self.n_agents)
-        # next_vals = next_vals.view(self.max_seq_len, self.batch_size, self.n_agents)
+        if self.theta_opt:
+            q_thetas_val = q_thetas_val.view(self.max_seq_len, self.batch_size, self.n_agents)
+        
         next_moves_val = next_moves_val.view(self.max_seq_len, self.batch_size, self.n_agents)
         next_powers_val = next_powers_val.view(self.max_seq_len, self.batch_size, self.n_agents)
-        next_thetas_val = next_thetas_val.view(self.max_seq_len, self.batch_size, self.n_agents)
+        if self.theta_opt:
+            next_thetas_val = next_thetas_val.view(self.max_seq_len, self.batch_size, self.n_agents)
 
         # Obtain target of update.
         rews, dones = rews.expand_as(next_moves_val), dones.expand_as(next_moves_val)
         target_moves_qvals = rews + self.gamma * (1 - dones) * next_moves_val
         rews, dones = rews.expand_as(next_powers_val), dones.expand_as(next_powers_val)
         target_powers_qvals = rews + self.gamma * (1 - dones) * next_powers_val
-        rews, dones = rews.expand_as(next_thetas_val), dones.expand_as(next_thetas_val)
-        target_thetas_qvals = rews + self.gamma * (1 - dones) * next_thetas_val
+        if self.theta_opt:
+            rews, dones = rews.expand_as(next_thetas_val), dones.expand_as(next_thetas_val)
+            target_thetas_qvals = rews + self.gamma * (1 - dones) * next_thetas_val
         # Compute MSE loss.
         loss_moves = self.loss_fn(q_moves_val, target_moves_qvals)
         loss_powers = self.loss_fn(q_powers_val, target_powers_qvals)
-        loss_thetas = self.loss_fn(q_thetas_val, target_thetas_qvals)
-        # loss = self.loss_fn(qvals, target_qvals)
-        loss = (loss_moves + loss_powers + loss_thetas) / 3
+        if self.theta_opt:
+            loss_thetas = self.loss_fn(q_thetas_val, target_thetas_qvals)
+            loss = (loss_moves + loss_powers + loss_thetas) / 3
+        else:
+            loss = (loss_moves + loss_powers) / 2
 
         # Call one step of gradient descent.
         self.optimizer.zero_grad()
@@ -265,10 +306,18 @@ class MultiAgentQLearner:
                     p_targ.data.mul_(self.polyak)
                     p_targ.data.add_((1 - self.polyak) * p.data)
 
-        return dict(LossQ=loss.item(),
+        if self.theta_opt:
+            update_info = dict(LossQ=loss.item(),
+                        move_QVals=q_moves_val.detach().cpu().numpy(),
+                        power_QVals=q_powers_val.detach().cpu().numpy(),
+                        theta_QVals=q_thetas_val.detach().cpu().numpy())
+        else:
+            update_info = dict(LossQ=loss.item(),
                     move_QVals=q_moves_val.detach().cpu().numpy(),
-                    power_QVals=q_powers_val.detach().cpu().numpy(),
-                    theta_QVals=q_thetas_val.detach().cpu().numpy())
+                    power_QVals=q_powers_val.detach().cpu().numpy(),)
+                    # theta_QVals=q_thetas_val.detach().cpu().numpy())
+
+        return update_info
 
     def save_model(self, path, stamp):
         checkpoint = dict()

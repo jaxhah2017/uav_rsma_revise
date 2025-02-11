@@ -159,6 +159,7 @@ if __name__ == '__main__':
     parser.add_argument('--episode_length', type=int, default=100, help='Episode length')
     parser.add_argument('--num_test_episodes', type=int, default=10, help='Number of test episodes')
     parser.add_argument('--save_freq', type=int, default=10, help='Save frequency')
+    parser.add_argument('--theta_opt', type=bool, default=False, help='Whether to do theta optimize')
 
     # 交互环境设置
     parser.add_argument('--map', default=General4uavMap, help='map type')
@@ -178,7 +179,9 @@ if __name__ == '__main__':
 
     train_kwargs = {'map': General4uavMap,
                     'avoid_collision': True,
-                    'hidden_size': 128}
+                    'batch_size': 256,
+                    'hidden_size':128,
+                    'theta_opt': True,}
 
     train(args, train_kwargs)
 

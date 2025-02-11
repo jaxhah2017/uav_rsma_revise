@@ -1,15 +1,20 @@
 import random
 from collections import deque
 
-scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'act_thetas', 'rew', 'done'}
+# scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'act_thetas', 'rew', 'done'}
+# scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'rew', 'done'}
 
 class ReplayBuffer(object):
     """Replay buffer for current agents"""
 
-    def __init__(self, capacity, max_seq_len, scheme=scheme):
+    def __init__(self, capacity, max_seq_len, theta_opt):
         self.memory = deque(maxlen=capacity)  # Memory holding data
         self.max_seq_len = max_seq_len  # Maximum length of time sequence
-        self.scheme = scheme  # Keys of entries
+        self.theta_opt = theta_opt # theta optimization
+        if self.theta_opt:
+            self.scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'act_thetas', 'rew', 'done'}
+        else:
+            self.scheme = {'obs_other_features', 'obs_gt_features', 'h', 'state', 'act_moves', 'act_powers', 'rew', 'done'}
 
         self.curr_seq = {k: [] for k in self.scheme}  # Current sequence
         self.ptr = 0  # Pointer of sequence.

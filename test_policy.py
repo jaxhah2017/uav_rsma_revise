@@ -50,12 +50,14 @@ def load_and_run_policy(model_path='', config_path=''):
             fair_index = useful_data['fair_idx']
             secrecy_rate = useful_data['secrecy_rate']
             throughput = useful_data['throughput']
+            theta = useful_data['thetas']
             n_uav = str(env_info['n_ubs'])
 
             data = dict(expname=n_uav + "uav",
                         init_info=init_info,
                         uav_traj=uav_traj,
                         jamming_powers=jamming_powers,
+                        theta=theta,
                         fair_index=fair_index,
                         secrecy_rate=secrecy_rate,
                         throughput=throughput,
@@ -70,7 +72,7 @@ def load_and_run_policy(model_path='', config_path=''):
 
 
 if __name__ == '__main__':
-    exp_name = 'exp1/'
+    exp_name = 'exp4/'
     exp_path = './mha_drqn_data/' + exp_name
     config_path = exp_path + 'config.json'
     test_ret_path = exp_path + 'vars/test_p_ret'
@@ -79,9 +81,8 @@ if __name__ == '__main__':
 
     data_save_path = exp_path + '/vars/data'
     model_save_path = exp_path + '/vars/best_cpk.pt'
-    start = 200
 
-    pic_save_path = exp_path + 'pics'
+    pic_save_path = exp_path + '/pics'
     if not os.path.exists(pic_save_path):
         os.mkdir(pic_save_path)    
 
@@ -93,6 +94,7 @@ if __name__ == '__main__':
 
     saveif = True
     overview = False
+    start = 200
     if overview:
         for _ in range(10000):
             model_path2 = model_path + str(start) + '.pt'
@@ -102,9 +104,11 @@ if __name__ == '__main__':
             n_uav = len(data['init_info']['uav_init_pos'])
 
             if n_uav == 4:
-                plot4uav_traj(init_info=data['init_info'], uav_traj=data['uav_traj'], jamming_power=data['jamming_powers'], args=args, pic_path=pic_path)
+                plot4uav_traj(init_info=data['init_info'], uav_traj=data['uav_traj'], jamming_power=data['jamming_powers'], args=args, pic_path=pic_save_path)
             elif n_uav == 2:
-                plot2uav_traj(init_info=data['init_info'], uav_traj=data['uav_traj'], jamming_power=data['jamming_powers'], args=args, pic_path=pic_path)            
+                plot2uav_traj(init_info=data['init_info'], uav_traj=data['uav_traj'], jamming_power=data['jamming_powers'], args=args, pic_path=pic_save_path)            
+
+            plot_opt_theta(epi_theta=data['theta'], pic_save_path=pic_save_path)
 
             if saveif:
                 shutil.copyfile(model_path2, model_save_path)
