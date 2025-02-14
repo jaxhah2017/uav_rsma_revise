@@ -174,14 +174,24 @@ if __name__ == '__main__':
     parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions')
     parser.add_argument('--avoid_collision', type=bool, default=True, help='Whether to calculate collision penalty')
     parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
+    parser.add_argument('--sigma_err_sq', type=float, default=0.1, help='Channel Estimation Error')
+    parser.add_argument('--apply_err_sq', type=bool, default=False, help='Application channel estimation error')
 
     args = parser.parse_args()
+
+    # train_kwargs = {'map': General4uavMap,
+    #                 'avoid_collision': True,
+    #                 'batch_size': 256,
+    #                 'hidden_size':256,
+    #                 'theta_opt': True,}
+
 
     train_kwargs = {'map': General4uavMap,
                     'avoid_collision': True,
                     'batch_size': 256,
-                    'hidden_size':128,
-                    'theta_opt': True,}
+                    'hidden_size':256,
+                    'theta_opt': True,
+                    'apply_small_fading': True}
 
     train(args, train_kwargs)
 

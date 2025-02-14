@@ -11,13 +11,14 @@ class AirToGroundChannel(object):
         'high-rise-urban': (27.23, 0.08, 2.3, 34)
     }
 
-    def __init__(self, scene, fc: float = 2.4e9, apply_small_fading: bool = False):
+    def __init__(self, scene, fc: float = 2.4e9, apply_err_sq: bool = False, sigma_err_sq: float = 0.1):
         # Determine the scene-specific parameters.
         params = self.chan_params[scene]
         self.a, self.b = params[0], params[1]  # Constants for computing p_los
         self.eta_los, self.eta_nlos = params[2], params[3]  # Path loss exponents (LoS/NLoS)
         self.fc = fc  # Central carrier frequency (Hz)
-        self.apply_small_fading = apply_small_fading # 应用小尺度衰落
+        self.apply_err_sq = apply_err_sq # 应用信道误差
+        self.sigma_err_sq = sigma_err_sq # 信道误差
 
     def estimate_chan_gain(self, d_level: float, h_ubs: float = 100, K_richan=-40) -> float:
         """Estimates the channel gain from horizontal distance."""
@@ -32,24 +33,38 @@ class AirToGroundChannel(object):
         pl = p_los * fspl * 10 ** (self.eta_los / 10) + (1 - p_los) * fspl * 10 ** (self.eta_nlos / 10)
         h = 1 / pl
 
-        if self.apply_small_fading:
-            """small scale"""
-            h_rayleigh = (np.random.randn(1) + 1j * np.random.randn(1)) / np.sqrt(2)
+        #debug
+        h = 1
+
+        if self.apply_err_sq:
+            """信道估计误差"""
+            # 生成估计信道部分
+            real_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))
+            imag_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))
+            hat_h = real_hat + 1j * imag_hat
+            
+            # 生成估计误差部分
+            real_delta = np.random.normal(0, np.sqrt(self.sigma_err_sq/2))
+            imag_delta = np.random.normal(0, np.sqrt(self.sigma_err_sq/2))
+            delta_h = real_delta + 1j * imag_delta
+            
+            # 实际信道
+            h = np.sqrt(h) * (hat_h + delta_h)
+            
+            
+            # h_rayleigh = (np.random.randn(1) + 1j * np.random.randn(1)) / np.sqrt(2)
             # K_richan = np.power(10, K_richan / 10)  # K_richan (DB)
             # h_richan = np.sqrt(K_richan / (K_richan + 1)) + np.sqrt(1 / (K_richan + 1)) * h_rayleigh
-            
-            """channel gain"""
-            h = np.sqrt(h) * h_rayleigh
-            h = complex(h[0])
-            print(type(h))
+            # print(type(h))
 
         return h
 
 
 class GroundToGroundChannel(object):
-    def __init__(self, fc, apply_small_fading: bool = False):
+    def __init__(self, fc, apply_err_sq: bool = False, sigma_err_sq: float = 0.1):
         self.fc = fc
-        self.apply_small_fading = apply_small_fading
+        self.apply_err_sq = apply_err_sq # 应用信道误差
+        self.sigma_err_sq = sigma_err_sq # 信道误差
 
     def estimate_chan_gain(self, d: float) -> float:
         """channel gain"""
@@ -58,36 +73,43 @@ class GroundToGroundChannel(object):
         fspl = (4 * np.pi * self.fc * d / 3e8) ** 2
         h = 1 / fspl
         
-        if self.apply_small_fading:
-            """small scale"""
-            h_rayleigh = (np.random.randn(1) + 1j * np.random.randn(1)) / np.sqrt(2)
-            h = np.sqrt(h) * h_rayleigh
-            h = complex(h[0])
-            print(type(h))
+        #debug
+        h = 1
+
+        if self.apply_err_sq:
+            """信道估计误差"""
+            # 生成估计信道部分
+            real_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))
+            imag_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))
+            hat_h = real_hat + 1j * imag_hat
+            
+            # 生成估计误差部分
+            real_delta = np.random.normal(0, np.sqrt(self.sigma_err_sq/2))
+            imag_delta = np.random.normal(0, np.sqrt(self.sigma_err_sq/2))
+            delta_h = real_delta + 1j * imag_delta
+            
+            # 实际信道
+            h = np.sqrt(h) * (hat_h + delta_h)
 
         return h
-
-
-class ChannelEstimateError(object):
-    def __init__(self, std):
-        self.var = std ** 2
-
-    def estimate_chan_error_gain(self):
-        g_delta = (np.random.randn(1) + 1j * np.random.randn(1)) * np.sqrt(
-            self.var / 2)  # Complex Gaussian distribution (0, 0.01)
-
-        return g_delta[0]
 
 
 if __name__ == '__main__':
     scene = 'urban'
     fc = 2.4e9
-    ATGChannel = AirToGroundChannel(scene, fc, apply_small_fading=True)  # UAV->GT, Eve
-    GTGChannel = GroundToGroundChannel(fc, apply_small_fading=True)  # GT->GT, GT->Eve
+    ATGChannel = AirToGroundChannel(scene, fc, apply_err_sq=True, sigma_err_sq=0.1)  # UAV->GT, Eve
+    GTGChannel = GroundToGroundChannel(fc, apply_err_sq=True, sigma_err_sq=0.1)  # GT->GT, GT->Eve
     g_atg_max = ATGChannel.estimate_chan_gain(d_level=0, h_ubs=1, K_richan=-40)  # ATG Maximum channel gain
 
-    # for i in range(10):
-    #     print(ATGChannel.estimate_chan_gain(d_level=i*10, h_ubs=1, K_richan=-40))
+    x = []
+    for i in range(20):
+        g_atg_max = g_atg_max = ATGChannel.estimate_chan_gain(d_level=0, h_ubs=1, K_richan=-40)
+        x.append(g_atg_max)
+
+    print(x)
+    x = np.array(x)
+    print("实际信道功率:", np.mean(np.abs(x)**2))
+    print("实际信道功率:", np.mean(np.linalg.norm(x)))
 
     print(g_atg_max)
     # print(type(g_atg_max))

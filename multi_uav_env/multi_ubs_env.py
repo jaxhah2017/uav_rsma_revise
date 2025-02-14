@@ -29,6 +29,8 @@ class MultiUbsRsmaEvn:
         self.serv_capacity = args.serv_capacity # 服务范围
         
         self.apply_small_fading = args.apply_small_fading # 是否应用小尺度衰落
+        self.apply_err_sq = args.apply_err_sq # 是否应用信道估计误差
+        self.sigma_err_sq = args.sigma_err_sq # 信道估计误差
 
         self.episode_length = args.episode_length # 每个episode的长度
 
@@ -43,8 +45,8 @@ class MultiUbsRsmaEvn:
         self.n_agents = self.n_uav # 智能体个数=无人机的个数
 
         # 信道
-        self.atg_chan_model = AirToGroundChannel(scene=self.scene, fc=self.fc, apply_small_fading=self.apply_small_fading) # ATG信道
-        self.gtg_chan_model = GroundToGroundChannel(fc=self.fc) # GTG信道
+        self.atg_chan_model = AirToGroundChannel(scene=self.scene, fc=self.fc, apply_err_sq=self.apply_err_sq, sigma_err_sq=self.sigma_err_sq) # ATG信道
+        self.gtg_chan_model = GroundToGroundChannel(fc=self.fc, apply_err_sq=self.apply_err_sq, sigma_err_sq=self.sigma_err_sq) # GTG信道
 
         # 距离矩阵
         self.dis_U2G = np.zeros((self.n_uav, self.n_gt), dtype=np.float32) # UAV->GT距离
@@ -225,7 +227,7 @@ class MultiUbsRsmaEvn:
                 if self.cov_U2G[k][i] == 1:
                     g = self.atg_chan_model.estimate_chan_gain(d_level=self.dis_U2G[k][i], h_ubs=self.h_ubs)
                     self.H_U2G[k][i] = g
-                    self.H_U2G_norm_2[k][i] = np.linalg.norm(g) ** 2
+                    self.H_U2G_norm_2[k][i] = np.abs(g) ** 2
                     self.gt_norm_2[i] = self.H_U2G_norm_2[k][i]
         
         # 生成UAV-Eve的信道 (TODO:不完美状态信息)
@@ -236,7 +238,7 @@ class MultiUbsRsmaEvn:
                 if self.sche_U2E[k][e] == 1:
                     g = self.atg_chan_model.estimate_chan_gain(d_level=self.dis_U2E[k][e], h_ubs=self.h_ubs)
                     self.H_U2E[k][e] = g
-                    self.H_U2E_norm_2[k][e] = np.linalg.norm(g) ** 2
+                    self.H_U2E_norm_2[k][e] = np.abs(g) ** 2
         
         # 生成GT-GT的信道
         self.H_G2G = np.zeros((self.n_gt, self.n_gt))
@@ -245,7 +247,7 @@ class MultiUbsRsmaEvn:
             for j in range(self.n_gt):
                 g = self.gtg_chan_model.estimate_chan_gain(d=self.dis_G2G[i][j])
                 self.H_G2G[i][j] = g
-                self.H_G2G_norm_2[i][j] = np.linalg.norm(g) ** 2
+                self.H_G2G_norm_2[i][j] = np.abs(g) ** 2
 
         # 生成GT-Eve信道 (TODO:不完美状态信息)
         self.H_G2E = np.zeros((self.n_gt, self.n_eve))
@@ -254,7 +256,7 @@ class MultiUbsRsmaEvn:
             for e in range(self.n_eve):
                 g = self.gtg_chan_model.estimate_chan_gain(d=self.dis_G2E[i][e])
                 self.H_G2E[i][e] = g
-                self.H_G2E_norm_2[i][e] = np.linalg.norm(g) ** 2
+                self.H_G2E_norm_2[i][e] = np.abs(g) ** 2
     
     def transmit_data(self, jamming_power, thetas):
         """stage 1: 直接传输阶段"""

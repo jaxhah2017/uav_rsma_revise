@@ -5,6 +5,7 @@
 *.png
 mha_drqn_data/
 .pickle
+nohup*
 
 ### Vscode ###
 .vscode
