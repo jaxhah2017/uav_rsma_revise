@@ -6,6 +6,8 @@
 mha_drqn_data/
 .pickle
 nohup*
+test.py
+tempCodeRunnerFile.py
 
 ### Vscode ###
 .vscode

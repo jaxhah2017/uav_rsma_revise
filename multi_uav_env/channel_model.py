@@ -33,10 +33,7 @@ class AirToGroundChannel(object):
         pl = p_los * fspl * 10 ** (self.eta_los / 10) + (1 - p_los) * fspl * 10 ** (self.eta_nlos / 10)
         h = 1 / pl
 
-        #debug
-        h = 1
-
-        if self.apply_err_sq:
+        if self.apply_err_sq == True:
             """信道估计误差"""
             # 生成估计信道部分
             real_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))
@@ -72,11 +69,8 @@ class GroundToGroundChannel(object):
         d = d + 0.0000000000000000000000000000001
         fspl = (4 * np.pi * self.fc * d / 3e8) ** 2
         h = 1 / fspl
-        
-        #debug
-        h = 1
 
-        if self.apply_err_sq:
+        if self.apply_err_sq == True:
             """信道估计误差"""
             # 生成估计信道部分
             real_hat = np.random.normal(0, np.sqrt((1 - self.sigma_err_sq)/2))

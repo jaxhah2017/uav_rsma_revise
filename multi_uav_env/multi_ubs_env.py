@@ -35,6 +35,7 @@ class MultiUbsRsmaEvn:
         self.episode_length = args.episode_length # 每个episode的长度
 
         self.theta_opt = args.theta_opt # 是否优化theta
+        self.fair_service = args.fair_service
 
         # 地图map、位置信息
         self.map = args.map()
@@ -676,7 +677,7 @@ class MultiUbsRsmaEvn:
         return self.n_gt, sg_fs
 
     def get_reward(self, reward_scale_rate) -> float:
-        ubs_rewards = self.fair_idx_t * self.sec_rate_t * np.ones(self.n_agents, dtype=np.float32)
+        ubs_rewards = self.fair_service * self.fair_idx_t * self.sec_rate_t * np.ones(self.n_agents, dtype=np.float32)
         ubs_rewards = reward_scale_rate * ubs_rewards / self.achievable_rate_ubs_max
         idle_ubs_mask = (self.rate_ubs_t == 0)  
         ubs_rewards = ubs_rewards * (1 - idle_ubs_mask)  # 空闲无人机不能获得奖励

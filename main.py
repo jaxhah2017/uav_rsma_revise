@@ -176,6 +176,7 @@ if __name__ == '__main__':
     parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
     parser.add_argument('--sigma_err_sq', type=float, default=0.1, help='Channel Estimation Error')
     parser.add_argument('--apply_err_sq', type=bool, default=False, help='Application channel estimation error')
+    parser.add_argument('--fair_service', type=bool, default=True, help='Application channel estimation error')
 
     args = parser.parse_args()
 
@@ -189,9 +190,10 @@ if __name__ == '__main__':
     train_kwargs = {'map': General4uavMap,
                     'avoid_collision': True,
                     'batch_size': 256,
-                    'hidden_size':256,
+                    'hidden_size':128,
                     'theta_opt': True,
-                    'apply_small_fading': True}
+                    'apply_err_sq': False,
+                    'fair_service': False}
 
     train(args, train_kwargs)
 

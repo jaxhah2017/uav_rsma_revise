@@ -72,7 +72,7 @@ def load_and_run_policy(model_path='', config_path=''):
 
 
 if __name__ == '__main__':
-    exp_name = 'exp5/'
+    exp_name = 'exp8/'
     exp_path = './mha_drqn_data/' + exp_name
     config_path = exp_path + 'config.json'
     test_ret_path = exp_path + 'vars/test_p_ret'
@@ -94,7 +94,7 @@ if __name__ == '__main__':
 
     saveif = True
     overview = True
-    start = 160
+    start = 200
     if overview:
         for _ in range(10000):
             model_path2 = model_path + str(start) + '.pt'
