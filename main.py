@@ -162,7 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--theta_opt', type=bool, default=False, help='Whether to do theta optimize')
 
     # 交互环境设置
-    parser.add_argument('--map', default=General4uavMap, help='map type')
+    parser.add_argument('--map', default='General4uavMap', help='map type')
     parser.add_argument('--apply_small_fading', type=bool, default=False)
     parser.add_argument('--cov_range', type=float, default=50, help='coverage range (m)')
     parser.add_argument('--comm_range', type=float, default=np.inf, help='communication range (m)')
@@ -171,29 +171,36 @@ if __name__ == '__main__':
     parser.add_argument('--jamming_power_bound', type=float, default=15, help='jamming power of UAV (dBm)')
     parser.add_argument('--fair_service', type=bool, default=True, help='fair service')
     parser.add_argument('--n_powers', type=int, default=10, help='the number of power level')
-    parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions')
+    parser.add_argument('--n_dirs', type=int, default=16, help='the number of move directions') # 修改了方向个数
     parser.add_argument('--avoid_collision', type=bool, default=True, help='Whether to calculate collision penalty')
     parser.add_argument('--penlty', type=float, default=0.2, help='collision penlty')
     parser.add_argument('--sigma_err_sq', type=float, default=0.1, help='Channel Estimation Error')
     parser.add_argument('--apply_err_sq', type=bool, default=False, help='Application channel estimation error')
-    parser.add_argument('--fair_service', type=bool, default=True, help='Application channel estimation error')
+    parser.add_argument('--trans_scheme', type=str, default='Proposed', help='Transmission scheme')
+    parser.add_argument('--algo', type=str, default='Proposed', help='Algorithm used')
 
     args = parser.parse_args()
 
-    # train_kwargs = {'map': General4uavMap,
-    #                 'avoid_collision': True,
-    #                 'batch_size': 256,
-    #                 'hidden_size':256,
-    #                 'theta_opt': True,}
+    map_otions = {'General4uavMap': 'General4uavMap',
+                  'General2uavMap': 'General2uavMap'}
 
+    transmission_scheme_options = {'Proposed': 'Proposed',
+                                   'RSMA': 'RSMA',
+                                   'C_NOMA': 'C_NOMA'}
 
-    train_kwargs = {'map': General4uavMap,
-                    'avoid_collision': True,
+    algorithm_options = {'Proposed':'Proposed',
+                         'MADDPG': 'MADDPG'}
+
+    train_kwargs = {'avoid_collision': True,
                     'batch_size': 256,
                     'hidden_size':128,
                     'theta_opt': True,
                     'apply_err_sq': False,
-                    'fair_service': False}
+                    'fair_service': True,
+                    'map': map_otions['General4uavMap'],
+                    'trans_scheme': transmission_scheme_options['RSMA'],
+                    'algo': algorithm_options['Proposed']}
 
     train(args, train_kwargs)
+
 

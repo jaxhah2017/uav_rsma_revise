@@ -20,7 +20,7 @@ def load_and_run_policy(model_path='', config_path=''):
     parsed_json = json.loads(file_contents)
     config = list(parsed_json.values())[0]
     args = SN(**config)
-    args.map = General4uavMap
+    # args.map = General4uavMap
     # print(args)
     # Set random seeds.
     set_rand_seed(args.seed)
@@ -72,7 +72,7 @@ def load_and_run_policy(model_path='', config_path=''):
 
 
 if __name__ == '__main__':
-    exp_name = 'exp8/'
+    exp_name = 'exp2/'
     exp_path = './mha_drqn_data/' + exp_name
     config_path = exp_path + 'config.json'
     test_ret_path = exp_path + 'vars/test_p_ret'
@@ -92,9 +92,9 @@ if __name__ == '__main__':
                       smooth=False,
                       smooth_beta=0.9)
 
-    saveif = True
+    saveif = False
     overview = True
-    start = 200
+    start = 10
     if overview:
         for _ in range(10000):
             model_path2 = model_path + str(start) + '.pt'
