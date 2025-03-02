@@ -1,29 +1,27 @@
-from multi_uav_env.maps import General4uavMap, General2uavMap
-from multi_uav_env.multi_ubs_env import MultiUbsRsmaEvn
-
-import argparse
-
-import numpy as np
-
 import torch
 
-from algo_mha_drqn.utils import *
-from algo_mha_drqn.ma_learner import MultiAgentQLearner
+from buffer import ReplayBuffer
+
+from maddpg_uav_env.multi_ubs_env import MultiUbsRsmaEvn
+
+from utils import *
+
+from maddpg import MADDPG
+
+import os
+
+from maddpg_uav_env.maps import General4uavMap, General2uavMap
 
 from tensorboardX import SummaryWriter
 
-def train(args, train_kwards: dict = dict()):
-    for i in range(1, 100):
-        output_dir = './mha_drqn_data/exp'
-        if not os.path.exists(output_dir + str(i)):
-            output_dir = './mha_drqn_data/exp'
-            output_dir = output_dir + str(i)
-            os.makedirs(output_dir)
-            os.makedirs(output_dir + '/checkpoints')
-            os.makedirs(output_dir + '/logs')
-            os.makedirs(output_dir + '/vars')
-            break
-    
+def train(args, train_kwards: dict = dict(), expname=''):
+    output_dir = '/home/zlj/uav_rsma_revise/algo_maddpg/maddpg_data/' + expname + '/'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        os.makedirs(output_dir + '/checkpoints')
+        os.makedirs(output_dir + '/logs')
+        os.makedirs(output_dir + '/vars')
+
     # 参数设置
     args.__dict__.update(train_kwards)
     args.output_dir = output_dir
@@ -32,34 +30,28 @@ def train(args, train_kwards: dict = dict()):
 
     # 设置随机数种子
     set_rand_seed(args.seed)
-
-    # 初始化环境
+    
     env = MultiUbsRsmaEvn(args)
     test_env = MultiUbsRsmaEvn(args)
     env_info = env.get_env_info()
-
-    learner = MultiAgentQLearner(env_info, args)
-    total_steps = args.steps_per_epoch * args.epochs
-    update_after = max(args.update_after, learner.batch_size * learner.max_seq_len)  # Number of steps before updates
-    update_every = learner.max_seq_len  # 模型更新间隔
-
-    # 设置探索策略
-    eps_start, eps_end = 1, 0.05  # 初始化探索率
-    eps_thres = lambda t: max(eps_end, -(eps_start - eps_end) / args.decay_steps * t + eps_start)  # Epsilon scheduler
+    replay_buffer = ReplayBuffer(args.replay_size)
+    learner = MADDPG(env_info=env_info, args=args)
+    update_after = max(args.update_after, args.batch_size * args.episode_length)
+    update_every = args.episode_length
 
     test_agents = 0
     test_p_ret = []
     ep_ret_list = []
-    def test_agent(test_agents, num_test_episodes):
+    def evaluate(num_test_episodes=10, test_agents=1):
         with torch.no_grad():
             """Tests the performance of trained agents."""
             returns_mean = []
             returns = np.zeros(env_info['n_ubs'], dtype=np.float32)
             for n in range(args.num_test_episodes):
                 reward = 0
-                (o, _, init_info), h, d = test_env.reset(), learner.init_hidden(), False  # Reset drqn_env and RNN.
+                (o, _, init_info), d = test_env.reset(),  False  # Reset drqn_env and RNN.
                 while not d:  # one episode
-                    a, h, inference_time = learner.take_actions(o, h, 0.05)  # Take (quasi) deterministic actions at test time.
+                    a = learner.take_action(o, explore=False)  # Take (quasi) deterministic actions at test time.
                     o, _, _, d, info = test_env.step(a)  # Env step
                 returns += info["EpRet"]
                 returns_mean.append(info["EpRet"].mean())
@@ -68,65 +60,73 @@ def train(args, train_kwards: dict = dict()):
                 writer.add_scalar("evaluate returns/agent{} ep_ret".format(agt), returns[agt], test_agents)
 
             return returns_mean
-
-    # 开始训练
-    episode = 0
-    updates = 0
-    (o, s, init_info), h = env.reset(), learner.init_hidden()  # Reset drqn_env and RNN hidden states.
+    
+    return_list = [] 
+    total_step = 0
     writer = SummaryWriter(log_dir=args.output_dir + '/logs')
-    for t in range(total_steps):
-        # Select actions following epsilon-greedy strategy.
-        a, h2, inference_time = learner.take_actions(o, h, eps_thres(t))
-        # Call environment step.
-        o2, s2, r, d, info = env.step(a)
-        # Store experience to replay buffer.
-        learner.cache(o, h, s, a, r, o2, h2, s2, d, info.get("BadMask"))
-        # Move to next timestep.
-        o, s, h = o2, s2, h2
-        # Reach the end of an episode.
-        if d:
-            episode += 1  # On episode completes.
-            ep_ret_list.append(info["EpRet"])
-            writer.add_scalar("train environment/avg fairness index",
-                              info["avg_fair_idx_per_episode"] / args.episode_length, episode)
-            writer.add_scalar("train environment/total throughput", info["total_throughput"], episode)
-            writer.add_scalar("train returns/mean returns", info["mean_returns"], episode)
-            for agt in range(env_info['n_ubs']):
-                writer.add_scalar("train returns/agent{} ep_ret".format(agt), info["EpRet"][agt], episode)
-            print(
-                "智能体与环境交互第{}次, ep_ret = {}, total_throughput={}, average fair_idx = {}, ssr_system_rate = {}".
-                format(
-                    episode,
-                    info['EpRet'],
-                    info["total_throughput"],
-                    info['avg_fair_idx_per_episode'] / args.episode_length,
-                    info['Ssr_Sys']))
-            (o, s, init_info), h = env.reset(), learner.init_hidden()  # Reset drqn_env and RNN hidden states.
-        if (t >= update_after) and (t % update_every == 0):
-            # print("--------------------learner update--------------------")
-            updates += 1
-            diagnostic = learner.update()
-            # End of epoch handling
-        if (t + 1) % args.steps_per_epoch == 0:
-            epoch = (t + 1) // args.steps_per_epoch
-            # Test performance of trained agents.
-            returns_mean = test_agent(test_agents, args.num_test_episodes)
-            test_p_ret.append(returns_mean)
-            test_agents += 1
-            # Anneal learning rate.
-            if learner.anneal_lr:
-                learner.lr_scheduler.step()
-            # Save model parameters.
-            if (epoch % args.save_freq == 0) or (epoch == args.epochs):
+    epoch = 0
+    for i_episode in range(args.num_episodes):
+        o, s, init_info = env.reset()
+        for e_i in range(args.episode_length):
+            a = learner.take_action(o, explore=True)
+            o2, s2, r, d, info = env.step(a)
+            replay_buffer.add(o, a, r, o2, d)
+            o, s = o2, s2
+            
+            total_step += 1
+
+            if replay_buffer.size(
+            ) >= args.minimal_size and (total_step 
+                                        >= update_after
+                                        ) and (total_step % update_every == 0):
+                sample = replay_buffer.sample(args.batch_size)
+
+                def stack_array(x):
+                    rearranged = [[sub_x[i] for sub_x in x]
+                                for i in range(len(x[0]))]
+                    return [
+                        torch.FloatTensor(np.vstack(aa)).to(args.device)
+                        for aa in rearranged
+                    ]
+
+                sample = [stack_array(x) for x in sample]
+                for a_i in range(env_info['n_ubs']):
+                    learner.update(sample, a_i)
+                learner.update_all_targets()
+            
+            if d:
+                ep_ret_list.append(info["EpRet"])
+                writer.add_scalar("train environment/avg fairness index",
+                              info["avg_fair_idx_per_episode"] / args.episode_length, i_episode)
+                writer.add_scalar("train environment/total throughput", info["total_throughput"], i_episode)
+                writer.add_scalar("train returns/mean returns", info["mean_returns"], i_episode)
+                for agt in range(env_info['n_ubs']):
+                    writer.add_scalar("train returns/agent{} ep_ret".format(agt), info["EpRet"][agt], i_episode)
+                print(
+                    "智能体与环境交互第{}次, ep_ret = {}, total_throughput={}, average fair_idx = {}, ssr_system_rate = {}".
+                    format(
+                        i_episode,
+                        info['EpRet'],
+                        info["total_throughput"],
+                        info['avg_fair_idx_per_episode'] / args.episode_length,
+                        info['Ssr_Sys']))
+
+            if total_step % args.test_per_steps == 0 and total_step != 0:
+                epoch += 1
+                return_means = evaluate(num_test_episodes=10, test_agents=epoch)
+                test_p_ret.append(return_means)
+                if args.anneal_lr:
+                    learner.lr_step()
                 save_path = args.output_dir + '/checkpoints/checkpoint_epoch{}.pt'.format(epoch)
-                learner.save_model(save_path, stamp=dict(epoch=epoch, t=t))
+                learner.save_model(save_path, stamp=dict(epoch=epoch, t=total_step))
                 save_var(var_path=args.output_dir + '/vars/test_p_ret', var=test_p_ret)
                 save_var(var_path=args.output_dir + '/vars/ep_ret_list', var=ep_ret_list)
     writer.close()
     print("Complete.")
 
-if __name__ == '__main__':
 
+if __name__ == '__main__':
+    import argparse
     parser = argparse.ArgumentParser()
 
     # 训练设置
@@ -137,6 +137,9 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=256, help='batch size')
     parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
     parser.add_argument('--epochs', type=int, default=200, help='epochs')
+    parser.add_argument('--num_episodes', type=int, default=60000, help='num_episodes')
+    parser.add_argument('--update_interval', type=int, default=100, help='update_interval')
+    parser.add_argument('--minimal_size', type=int, default=4000, help='minimal_size') 
 
     # 智能体设置
     parser.add_argument('--n_layers', type=int, default=2, help='Number of layers of agent')
@@ -159,6 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--episode_length', type=int, default=100, help='Episode length')
     parser.add_argument('--num_test_episodes', type=int, default=10, help='Number of test episodes')
     parser.add_argument('--save_freq', type=int, default=10, help='Save frequency')
+    parser.add_argument('--test_per_steps', type=int, default=200, help='Save frequency')
     parser.add_argument('--theta_opt', type=bool, default=False, help='Whether to do theta optimize')
 
     # 交互环境设置
@@ -179,6 +183,7 @@ if __name__ == '__main__':
     parser.add_argument('--trans_scheme', type=str, default='Proposed', help='Transmission scheme')
     parser.add_argument('--algo', type=str, default='Proposed', help='Algorithm used')
 
+
     args = parser.parse_args()
 
     map_otions = {'General4uavMap': 'General4uavMap',
@@ -188,20 +193,34 @@ if __name__ == '__main__':
                                    'RSMA': 'RSMA',
                                    'C_NOMA': 'C_NOMA'}
 
-    algorithm_options = {'Proposed':'Proposed'}
+    algorithm_options = {'MADDPG': 'MADDPG'}
 
-    train_kwargs = {'avoid_collision': True,
+    # train_kwargs = {'avoid_collision': True,
+    #                 'batch_size': 256,
+    #                 'hidden_size':128,
+    #                 'theta_opt': True,
+    #                 'apply_err_sq': False,
+    #                 'fair_service': True,
+    #                 'map': map_otions['General4uavMap'],
+    #                 'trans_scheme': transmission_scheme_options['Proposed'],
+    #                 'algo': algorithm_options['MADDPG'],
+    #                 'test_per_steps':30000}
+
+    for ts in transmission_scheme_options:
+        for fair_service in [True, False]:
+            x = 'fair' if fair_service else 'unfair'
+            file_name = f"maddpg_ts_{ts}_{x}"
+            print(file_name)
+            train_kwargs = {'avoid_collision': True,
                     'batch_size': 256,
                     'hidden_size':128,
                     'theta_opt': True,
                     'apply_err_sq': False,
-                    'fair_service': False,
+                    'fair_service': True,
                     'map': map_otions['General4uavMap'],
-                    'trans_scheme': transmission_scheme_options['RSMA'],
-                    'algo': algorithm_options['Proposed']}
+                    'trans_scheme': ts,
+                    'algo': algorithm_options['MADDPG'],
+                    'test_per_steps':30000}
+            train(args=args, train_kwards=train_kwargs, expname=file_name)
 
-    #TODO: C_NOMA, fair/unfair
-
-    train(args, train_kwargs)
-
-
+    # train(args=args, train_kwards=train_kwargs)

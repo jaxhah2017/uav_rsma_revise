@@ -72,8 +72,11 @@ def load_and_run_policy(model_path='', config_path=''):
 
 
 if __name__ == '__main__':
-    exp_name = 'exp2/'
+    algo_choose = 'proposed' # TODO:need change
+
+    exp_name = 'exp1/'   # TODO:need change
     exp_path = './mha_drqn_data/' + exp_name
+
     config_path = exp_path + 'config.json'
     test_ret_path = exp_path + 'vars/test_p_ret'
     train_ret_path = exp_path + 'vars/ep_ret_list'

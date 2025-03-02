@@ -3,7 +3,7 @@
 
 ### others ### 
 *.png
-mha_drqn_data/
+*data/
 .pickle
 nohup*
 test.py
