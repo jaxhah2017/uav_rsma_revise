@@ -51,8 +51,13 @@ class DDPG:
             self.actor_lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self.actor_optimizer, lr_lambda=lr_lambda, verbose=True)
             self.critic_lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self.critic_optimizer, lr_lambda=lr_lambda, verbose=True)
 
-    def take_action(self, state, explore=False):
-        action = self.actor(state)
+    def init_hidden(self):
+        return self.actor.init_hidden()
+
+    def take_action(self, state, h, explore=False):
+        move, power, theta, h = self.actor(state, h)
+        action = (move, power, theta)
+        # action = self.actor(state)
         if explore:
             action = gumbel_softmax(action)
         else:
@@ -68,7 +73,7 @@ class DDPG:
 
         actions = dict(moves=move, powers=power, thetas=theta)
 
-        return actions
+        return actions, h
 
     def soft_update(self, net, target_net, tau):
         for param_target, param in zip(target_net.parameters(),

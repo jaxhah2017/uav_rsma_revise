@@ -33,30 +33,45 @@ class MADDPG:
     def target_policies(self):
         return [agt.target_actor for agt in self.agents]
 
-    def take_action(self, states, explore):
+    def take_action(self, states, hs, explore):
         # print(states)
         # print(states.shape)
         states = [
             torch.tensor([states[i]], dtype=torch.float, device=self.device)
             for i in range(self.n_agents)
         ]
-        return [
-            agent.take_action(state, explore)
-            for agent, state in zip(self.agents, states)
+        hs = [
+            hs[i].to(self.device) for i in range(self.n_agents)
         ]
 
+        actions = []    
+        h2s = []
+        for agent, state, h in zip(self.agents, states, hs):
+            action, h2 = agent.take_action(state, h, explore)
+            actions.append(action)
+            h2s.append(h2)
 
+        return actions, h2s
+
+    def init_hidden(self):
+        h = [agent.init_hidden() for agent in self.agents]
+        
+        return h
 
     def update(self, sample, i_agent):
-        obs, act, rew, next_obs, done = sample
+        obs, act, rew, next_obs, done, h, next_h = sample
         cur_agent = self.agents[i_agent]
 
         cur_agent.critic_optimizer.zero_grad()
 
         all_target_act = []
-        for pi, _next_obs in zip(self.target_policies, next_obs):
+        for pi, _next_obs, _next_h in zip(self.target_policies, next_obs, next_h):
             with torch.no_grad():
-                move_logits, power_logits, theta_logits = onehot_from_logits(pi(_next_obs))
+                move, power, theta, _ = pi(_next_obs, _next_h)
+                actions = (move, power, theta)
+                # actions, _ = pi(_next_obs, _next_h)
+                move_logits, power_logits, theta_logits = onehot_from_logits(actions)
+#                 move_logits, power_logits, theta_logits, _ = onehot_from_logits(pi(_next_obs))
                 all_target_act.extend([
                     move_logits,
                     power_logits,
@@ -64,28 +79,41 @@ class MADDPG:
                 ])
 
         target_critic_input = torch.cat((*next_obs, *all_target_act), dim=1)
-        target_critic_value = rew[i_agent].view(-1, 1) + self.gamma * cur_agent.target_critic(target_critic_input) * (1 - done[i_agent].view(-1, 1))
+        target_q, _ = cur_agent.target_critic(target_critic_input, next_h[i_agent])
+        target_critic_value = rew[i_agent].view(-1, 1) + self.gamma * target_q * (1 - done[i_agent].view(-1, 1))
+        # target_critic_value = rew[i_agent].view(-1, 1) + self.gamma * cur_agent.target_critic(target_critic_input) * (1 - done[i_agent].view(-1, 1))
 
         critic_input = torch.cat((*obs, *act), dim=1)
-        critic_value = cur_agent.critic(critic_input)
-        critic_loss = self.critic_criterion(critic_value,
-                                            target_critic_value.detach())
+        q_value, _ = cur_agent.critic(critic_input, h[i_agent])
+        # critic_value = cur_agent.critic(critic_input) 
+        critic_loss = self.critic_criterion(q_value, target_critic_value.detach())
+        # critic_loss = self.critic_criterion(critic_value,
+        #                                     target_critic_value.detach())
         critic_loss.backward()
         cur_agent.critic_optimizer.step()
 
         cur_agent.actor_optimizer.zero_grad()
-        cur_actor_out_move, cur_actor_out_power, cur_actor_out_theta = cur_agent.actor(obs[i_agent])
-        cur_act_vf_in_move, cur_act_vf_in_power, cur_act_vf_in_theta = gumbel_softmax((cur_actor_out_move, cur_actor_out_power, cur_actor_out_theta))
+        cur_actor_out_move, cur_actor_out_power, cur_actor_out_theta, _ = cur_agent.actor(obs[i_agent], h[i_agent])
+        cur_actor_out = (cur_actor_out_move, cur_actor_out_power, cur_actor_out_theta)
+        # cur_actor_out_move, cur_actor_out_power, cur_actor_out_theta = cur_agent.actor(obs[i_agent])
+        cur_act_vf_in_move, cur_act_vf_in_power, cur_act_vf_in_theta = gumbel_softmax(cur_actor_out)
         all_actor_acs = []
-        for i, (pi, _obs) in enumerate(zip(self.policies, obs)):
+        for i, (pi, _obs, _h) in enumerate(zip(self.policies, obs, h)):
             if i == i_agent:
                 all_actor_acs.extend([cur_act_vf_in_move, cur_act_vf_in_power, cur_act_vf_in_theta])
             else:
-                move, power, theta = onehot_from_logits(pi(_obs))
-                all_actor_acs.extend([move, power, theta])
+                with torch.no_grad():
+                    move, power, theta, _ = pi(_obs, _h)
+                    actions = (move, power, theta)
+                    # move, power, theta = onehot_from_logits(pi(_obs))
+                    move, power, theta = onehot_from_logits(actions)
+                    all_actor_acs.extend([move, power, theta])
         vf_in = torch.cat((*obs, *all_actor_acs), dim=1)
-        actor_loss = -cur_agent.critic(vf_in).mean()
+        q_value, _ = cur_agent.critic(vf_in, h[i_agent])
+        actor_loss = -q_value.mean()
+        # actor_loss = -cur_agent.critic(vf_in, h[i_agent]).mean()
         actor_loss += ((cur_actor_out_move**2).mean() + (cur_actor_out_power**2).mean() + (cur_actor_out_theta**2).mean()) * 1e-3
+        # actor_loss += (cur_actor_out.pow(2).mean()) * 1e-3
 
         actor_loss.backward()
         cur_agent.actor_optimizer.step()

@@ -14,6 +14,7 @@ class Agents_actor(nn.Module):
         for l in range(self._n_layers - 1):
             layers += [nn.Linear(self._hidden_size, self._hidden_size), nn.ReLU()]
         self.enc = nn.Sequential(*layers)
+        self.rnn = nn.GRUCell(self._hidden_size, self._hidden_size)
 
         self.move_head = nn.Linear(self._hidden_size, move_dim)
         self.power_head = nn.Linear(self._hidden_size, power_dim)
@@ -22,15 +23,17 @@ class Agents_actor(nn.Module):
     def init_hidden(self):
         return torch.zeros(1, self._hidden_size)
 
-    def forward(self, x):
+    def forward(self, x, h):
         x = self.enc(x)
 
-        move = self.move_head(x)
-        power = self.power_head(x)
-        theta = self.theta_head(x)
+        h = self.rnn(x, h)
+
+        move = self.move_head(h)
+        power = self.power_head(h)
+        theta = self.theta_head(h)
 
         
-        return move, power, theta
+        return move, power, theta, h
     
 class Agents_critic(nn.Module):
     def __init__(self, input_dim, n_layers=2, hidden_size=256):
@@ -42,19 +45,20 @@ class Agents_critic(nn.Module):
         for l in range(self._n_layers - 1):
             layers += [nn.Linear(self._hidden_size, self._hidden_size), nn.ReLU()]
         self.enc = nn.Sequential(*layers)
-
+        self.rnn = nn.GRUCell(self._hidden_size, self._hidden_size)
         self.q = nn.Linear(self._hidden_size, 1)
 
     def init_hidden(self):
         return torch.zeros(1, self._hidden_size)
 
-    def forward(self, x):
+    def forward(self, x, h):
         x = self.enc(x)
 
-        x = self.q(x)
+        h = self.rnn(x, h)
 
-        
-        return x
+        q_value = self.q(h)
+
+        return q_value, h
 
 if __name__ == '__main__':
     torch.manual_seed(10)

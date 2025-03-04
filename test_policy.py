@@ -74,8 +74,11 @@ def load_and_run_policy(model_path='', config_path=''):
 if __name__ == '__main__':
     algo_choose = 'proposed' # TODO:need change
 
-    exp_name = 'exp1/'   # TODO:need change
-    exp_path = './mha_drqn_data/' + exp_name
+    # exp_name = 'maddpg_ts_Proposed_fair/'   # TODO:need change
+    # exp_path = './mha_drqn_data/' + exp_name # proposed path
+    exp_name = 'maddpg_ts_Proposed_fair/'   # # maddpg path
+    exp_path = './algo_maddpg/maddpg_data/maddpg_ts_Proposed_fair/' # maddpg path
+    
 
     config_path = exp_path + 'config.json'
     test_ret_path = exp_path + 'vars/test_p_ret'
@@ -96,7 +99,7 @@ if __name__ == '__main__':
                       smooth_beta=0.9)
 
     saveif = False
-    overview = True
+    overview = False
     start = 10
     if overview:
         for _ in range(10000):
@@ -120,7 +123,7 @@ if __name__ == '__main__':
 
             start += 10
 
-    draw = True
+    draw = False
     if draw and not overview:
         data = load_var(data_save_path)
         print(data.keys())

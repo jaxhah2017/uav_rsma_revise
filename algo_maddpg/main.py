@@ -36,7 +36,8 @@ def train(args, train_kwards: dict = dict(), expname=''):
     env_info = env.get_env_info()
     replay_buffer = ReplayBuffer(args.replay_size)
     learner = MADDPG(env_info=env_info, args=args)
-    update_after = max(args.update_after, args.batch_size * args.episode_length)
+    update_after = args.update_after
+    # update_after = max(args.update_after, args.batch_size * args.episode_length) TODO:Debug
     update_every = args.episode_length
 
     test_agents = 0
@@ -65,12 +66,14 @@ def train(args, train_kwards: dict = dict(), expname=''):
     total_step = 0
     writer = SummaryWriter(log_dir=args.output_dir + '/logs')
     epoch = 0
+    actor_update = 0
+    h = learner.init_hidden()
     for i_episode in range(args.num_episodes):
         o, s, init_info = env.reset()
         for e_i in range(args.episode_length):
-            a = learner.take_action(o, explore=True)
+            a, h2 = learner.take_action(o, h, explore=True)
             o2, s2, r, d, info = env.step(a)
-            replay_buffer.add(o, a, r, o2, d)
+            replay_buffer.add(o, a, r, o2, d, h, h2)
             o, s = o2, s2
             
             total_step += 1
@@ -92,7 +95,10 @@ def train(args, train_kwards: dict = dict(), expname=''):
                 sample = [stack_array(x) for x in sample]
                 for a_i in range(env_info['n_ubs']):
                     learner.update(sample, a_i)
-                learner.update_all_targets()
+                actor_update += 1
+                if actor_update % 5 == 0:
+                    learner.update_all_targets()
+                    actor_update = 0
             
             if d:
                 ep_ret_list.append(info["EpRet"])
@@ -118,9 +124,10 @@ def train(args, train_kwards: dict = dict(), expname=''):
                 if args.anneal_lr:
                     learner.lr_step()
                 save_path = args.output_dir + '/checkpoints/checkpoint_epoch{}.pt'.format(epoch)
-                learner.save_model(save_path, stamp=dict(epoch=epoch, t=total_step))
-                save_var(var_path=args.output_dir + '/vars/test_p_ret', var=test_p_ret)
-                save_var(var_path=args.output_dir + '/vars/ep_ret_list', var=ep_ret_list)
+                if epoch % 10 == 0:
+                    learner.save_model(save_path, stamp=dict(epoch=epoch, t=total_step))
+                    save_var(var_path=args.output_dir + '/vars/test_p_ret', var=test_p_ret)
+                    save_var(var_path=args.output_dir + '/vars/ep_ret_list', var=ep_ret_list)
     writer.close()
     print("Complete.")
 
@@ -212,15 +219,19 @@ if __name__ == '__main__':
             file_name = f"maddpg_ts_{ts}_{x}"
             print(file_name)
             train_kwargs = {'avoid_collision': True,
-                    'batch_size': 256,
+                    'batch_size': 32, # TODO:Debug  256
                     'hidden_size':128,
                     'theta_opt': True,
                     'apply_err_sq': False,
-                    'fair_service': True,
+                    'fair_service': fair_service,
                     'map': map_otions['General4uavMap'],
                     'trans_scheme': ts,
                     'algo': algorithm_options['MADDPG'],
-                    'test_per_steps':30000}
+                    'test_per_steps':30000,
+                    'minimal_size': 40,
+                    'update_after':50,
+                    'update_every': 1
+                    }
             train(args=args, train_kwards=train_kwargs, expname=file_name)
 
     # train(args=args, train_kwards=train_kwargs)
