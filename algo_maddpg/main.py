@@ -36,9 +36,8 @@ def train(args, train_kwards: dict = dict(), expname=''):
     env_info = env.get_env_info()
     replay_buffer = ReplayBuffer(args.replay_size)
     learner = MADDPG(env_info=env_info, args=args)
-    update_after = args.update_after
-    # update_after = max(args.update_after, args.batch_size * args.episode_length) TODO:Debug
-    update_every = args.episode_length
+    update_after = max(args.update_after, args.batch_size * args.episode_length) 
+    update_every = args.episode_length * 2
 
     test_agents = 0
     test_p_ret = []
@@ -50,9 +49,10 @@ def train(args, train_kwards: dict = dict(), expname=''):
             returns = np.zeros(env_info['n_ubs'], dtype=np.float32)
             for n in range(args.num_test_episodes):
                 reward = 0
-                (o, _, init_info), d = test_env.reset(),  False  # Reset drqn_env and RNN.
+                (o, _, init_info), d = test_env.reset(), False  # Reset drqn_env and RNN.
+                h = learner.init_hidden()
                 while not d:  # one episode
-                    a = learner.take_action(o, explore=False)  # Take (quasi) deterministic actions at test time.
+                    a, h = learner.take_action(o, h, explore=False)  # Take (quasi) deterministic actions at test time.
                     o, _, _, d, info = test_env.step(a)  # Env step
                 returns += info["EpRet"]
                 returns_mean.append(info["EpRet"].mean())
@@ -219,7 +219,7 @@ if __name__ == '__main__':
             file_name = f"maddpg_ts_{ts}_{x}"
             print(file_name)
             train_kwargs = {'avoid_collision': True,
-                    'batch_size': 32, # TODO:Debug  256
+                    'batch_size': 256, 
                     'hidden_size':128,
                     'theta_opt': True,
                     'apply_err_sq': False,
@@ -228,9 +228,6 @@ if __name__ == '__main__':
                     'trans_scheme': ts,
                     'algo': algorithm_options['MADDPG'],
                     'test_per_steps':30000,
-                    'minimal_size': 40,
-                    'update_after':50,
-                    'update_every': 1
                     }
             train(args=args, train_kwards=train_kwargs, expname=file_name)
 
